@@ -1,0 +1,50 @@
+# Xcode
+build/
+DerivedData/
+*.xcuserdata/
+*.xcuserstate
+xcuserdata/
+*.xccheckout
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+*.swp
+
+# Swift Package Manager
+.build/
+Package.resolved
+.swiftpm/
+
+# Signing & secrets
+*.p12
+*.cer
+*.mobileprovision
+sparkle-ed25519.key
+*.eddsa
+.env
+.env.*
+
+# SayMoore runtime data (never check in user data or models)
+presets.json
+history.jsonl
+models/
+SayMoore/Resources/presets.json
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+._*
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# Misc
+*.log
+*.bak
+*.tmp
