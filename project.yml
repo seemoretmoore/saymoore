@@ -1,0 +1,72 @@
+name: SayMoore
+options:
+  bundleIdPrefix: com.seemoretmoore
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+  generateEmptyDirectories: true
+  defaultConfig: Release
+
+settings:
+  base:
+    SWIFT_VERSION: "5.10"
+    SWIFT_STRICT_CONCURRENCY: complete
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
+    CODE_SIGN_STYLE: Manual
+    DEVELOPMENT_TEAM: ""
+    ENABLE_HARDENED_RUNTIME: YES
+    ENABLE_DEBUG_DYLIB: NO
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_TREAT_WARNINGS_AS_ERRORS: NO
+    GCC_TREAT_WARNINGS_AS_ERRORS: NO
+  configs:
+    Debug:
+      CODE_SIGN_IDENTITY: "-"
+    Release:
+      CODE_SIGN_IDENTITY: "SayMoore Self-Sign"
+
+targets:
+  SayMoore:
+    type: application
+    platform: macOS
+    sources:
+      - path: SayMoore
+        excludes:
+          - "Resources/Info.plist"
+    resources:
+      - path: SayMoore/Resources
+        excludes:
+          - "Info.plist"
+        optional: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.seemoretmoore.saymoore
+        PRODUCT_NAME: SayMoore
+        INFOPLIST_FILE: SayMoore/Resources/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        LD_RUNPATH_SEARCH_PATHS:
+          - "$(inherited)"
+          - "@executable_path/../Frameworks"
+        COMBINE_HIDPI_IMAGES: YES
+    dependencies:
+      - framework: Vendor/whisper.xcframework
+        embed: true
+        codeSign: true
+    scheme:
+      testTargets:
+        - SayMooreTests
+
+  SayMooreTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: SayMooreTests
+    dependencies:
+      - target: SayMoore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.seemoretmoore.saymoore.tests
+        GENERATE_INFOPLIST_FILE: YES
+        BUNDLE_LOADER: "$(TEST_HOST)"
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/SayMoore.app/Contents/MacOS/SayMoore"

@@ -1,4 +1,5 @@
 # Xcode
+SayMoore.xcodeproj/
 build/
 DerivedData/
 *.xcuserdata/
@@ -31,6 +32,10 @@ presets.json
 history.jsonl
 models/
 SayMoore/Resources/presets.json
+
+# Vendored whisper.cpp XCFramework (~200 MB; produced by scripts/setup-whisper.sh)
+Vendor/whisper.xcframework/
+Vendor/.whisper-version
 
 # macOS
 .DS_Store

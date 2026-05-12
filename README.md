@@ -63,11 +63,17 @@ ollama pull qwen2.5:7b-instruct
 ```bash
 git clone https://github.com/seemoretmoore/saymoore
 cd saymoore
-bash scripts/setup-signing.sh        # one-time: creates a self-signed cert
-xcodebuild -scheme SayMoore -configuration Release
+
+brew install xcodegen cmake           # one-time: project file generator + whisper.cpp build dep
+bash scripts/setup-signing.sh         # one-time: creates a self-signed cert in your login keychain
+bash scripts/setup-whisper.sh         # one-time: builds Vendor/whisper.xcframework from pinned tag (~5 min)
+bash scripts/generate-project.sh      # writes SayMoore.xcodeproj from project.yml
+bash scripts/build-release.sh         # or open SayMoore.xcodeproj in Xcode
 ```
 
-The signing script is idempotent — re-running it without `--force-regen` is a safe no-op.
+`SayMoore.xcodeproj` is gitignored — regenerate it from `project.yml` whenever you edit sources, targets, or build settings.
+
+The signing script is idempotent — re-running it without `--force-regen` is a safe no-op. Using `--force-regen` rotates the identity, which revokes any Accessibility / Input-Monitoring permissions previously granted to SayMoore.
 
 ## License
 
