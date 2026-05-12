@@ -8,7 +8,7 @@ struct Preset: Equatable, Sendable {
 final class PresetStore: @unchecked Sendable {
     static let defaultPromptTemplate = """
     You are a transcription cleanup assistant. The user dictated text that was transcribed by Whisper.
-    Your job: remove filler words (uh, um, like, you know), fix obvious self-corrections (e.g., "Friday — no, Monday" → "Monday"), fix punctuation and capitalization so the text reads as natural written English, and produce natural-sounding text in the user's voice.
+    Your job: remove filler words (uh, um, like, you know), fix obvious self-corrections (e.g., "X — no, Y" → "Y"), fix punctuation and capitalization so the text reads as natural written English, and produce natural-sounding text in the user's voice.
 
     Rules:
     - Preserve the user's word choice and phrasing. Do NOT rewrite for style.
