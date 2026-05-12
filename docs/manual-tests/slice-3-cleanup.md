@@ -35,7 +35,21 @@ ollama pull qwen2.5:7b-instruct
 - Quit SayMoore, stop Ollama, launch SayMoore.
 - **Expect**: shortly after the model-bootstrap completes, an "Ollama not reachable" notification fires from the health probe — even before any dictation.
 
-### 6. Prompt-tuning iteration log
+### 6. Punctuation — missing periods
+- Dictate (one breath, no pauses): "I think we should ship Friday let me know if that works"
+- **Expect**: "I think we should ship Friday. Let me know if that works."
+- **Failure to watch for**: model rephrases ("I'm thinking…") rather than just adding the period.
+
+### 7. Capitalization — proper nouns + "I"
+- Dictate: "i talked to sarah yesterday about the london trip"
+- **Expect**: "I talked to Sarah yesterday about the London trip."
+- **Note**: Whisper may already capitalize some of these; the test passes if the final output is correct, regardless of which stage fixed it.
+
+### 8. Question marks
+- Dictate (flat intonation): "are you free on Tuesday"
+- **Expect**: "Are you free on Tuesday?"
+
+### 9. Prompt-tuning iteration log
 Record before/after for at least 10 representative phrases. Update PRD §Slice 3 prompt only if needed.
 
 | Phrase dictated | Raw whisper | Cleaned output | Verdict |
