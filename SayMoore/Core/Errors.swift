@@ -16,6 +16,8 @@ enum SayMooreError: Error {
     case modelCorrupted
     case diskFull
     case watchdogTimeout
+    case recordingTooLong
+    case silentCapture
 
     enum Permission: String, Sendable {
         case microphone, accessibility, inputMonitoring
@@ -48,7 +50,9 @@ extension SayMooreError: Equatable {
              (.modelMissing, .modelMissing),
              (.modelCorrupted, .modelCorrupted),
              (.diskFull, .diskFull),
-             (.watchdogTimeout, .watchdogTimeout):
+             (.watchdogTimeout, .watchdogTimeout),
+             (.recordingTooLong, .recordingTooLong),
+             (.silentCapture, .silentCapture):
             return true
         case let (.audioEngineFailed(a), .audioEngineFailed(b)):
             return String(describing: a) == String(describing: b)
