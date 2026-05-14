@@ -2,18 +2,31 @@
 
 Local, free, durable voice dictation for macOS.
 
-Hit a hotkey, talk, get clean text pasted into the focused field. Everything runs on-device — Whisper transcription in-process, Qwen 2.5 7B cleanup via local Ollama. No API costs, no subscriptions, no network at runtime.
+Hit a hotkey, talk, get clean text pasted into the focused field. Everything runs on-device — Whisper transcription in-process, Qwen 2.5 7B cleanup via local Ollama. No API costs, no subscriptions, no network at runtime, no audio or transcripts leaving the machine.
 
-> **Status:** in active development. See [`docs/PRD.md`](docs/PRD.md) for the full product spec and slice plan. Not yet ready for general use.
+> **Status:** in active development. Slices 0–4 are shipped and usable end-to-end; Slices 5–12 still pending (see table below). See [`docs/PRD.md`](docs/PRD.md) for the full product spec.
 
 ## How it works
 
 1. Press **Ctrl-Ctrl** (double-tap Control)
 2. Speak
-3. Press **Ctrl-Ctrl** again — or stay silent for 10s, or hit the 90s cap
-4. SayMoore transcribes locally with `whisper-large-v3-turbo`, applies a per-app tone preset via Ollama (`qwen2.5:7b-instruct`), and pastes the cleaned text into your focused field
+3. Press **Ctrl-Ctrl** again — or stay silent for 10s, or hit the 90s cap (VAD + cap land in Slice 5)
+4. SayMoore transcribes locally with `whisper-large-v3-turbo`, applies a **per-app tone preset** via Ollama (`qwen2.5:7b-instruct`), and pastes the cleaned text into your focused field
 
 Press **Esc** during recording to discard.
+
+### Per-app presets
+
+The same dictation gets cleaned differently depending on which app is frontmost. Example phrase — *"hi tracy uh i think we should ship friday and also fix the api timeout"*:
+
+| Frontmost app | Cleaned output |
+|---|---|
+| Slack | `hi tracy, i think we should ship friday and also fix the api timeout` |
+| Notes (or anything without an override) | `Hi Tracy, I think we should ship on Friday and also fix the API timeout.` |
+| Messages | `hi tracy, i think we should ship on friday and also fix the api timeout` |
+| BBEdit (code/notes editor) | `Fix getUserRequest and update JSON schema before calling API endpoint` *(on a different, technical phrase — preserves identifiers, drops articles)* |
+
+Bundled overrides ship for Slack, Notes, Messages, and BBEdit. Edit `~/Library/Application Support/SayMoore/presets.json` to add your own — changes hot-reload without restart. A "Reload Presets" menu item also triggers a manual reload.
 
 ## Status / what's shipped
 
@@ -44,19 +57,27 @@ This repo is being built one vertical slice at a time. Track progress in the [Gi
 - ~6 GB free RAM while running (1.5 GB Whisper + 4.5 GB Qwen)
 - ~6 GB free disk for models
 
-## Install (after first release)
+## Install
 
-Installation instructions will be added with the v0.1 release. The short version:
+No prebuilt binary yet — Slice 11 will ship a signed/notarised release. Until then, build from source (next section). At a high level the flow will eventually be:
 
 ```bash
 # 1. Install Ollama and pull the cleanup model
 brew install ollama
 ollama pull qwen2.5:7b-instruct
 
-# 2. Download the SayMoore release zip from GitHub Releases
+# 2. Download the SayMoore release zip from GitHub Releases (TBD)
 # 3. Move SayMoore.app to /Applications
 # 4. Launch — the first-run wizard handles permissions and Whisper model download
 ```
+
+## Known limitations (today)
+
+- No GUI installer. Build-from-source only.
+- No VAD or 90s length cap yet — recording stops on second Ctrl-Ctrl, or at the 2-min hard ring-buffer limit.
+- No visible recording HUD; cursor doesn't change. Menu-bar icon and a soft chime are the only feedback.
+- Self-signed: macOS Gatekeeper will warn on first launch. TCC grants for Microphone / Accessibility / Input Monitoring must be granted manually in System Settings.
+- Apple Silicon (M-series) only in practice — the Whisper model runs on the Neural Engine.
 
 ## Building from source
 
