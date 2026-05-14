@@ -66,15 +66,80 @@ final class PresetStoreTests: XCTestCase {
         XCTAssertEqual(store.defaultPreset().promptTemplate, PresetStore.defaultPromptTemplate)
     }
 
-    func testIgnoresUnknownKeysForSlice4ForwardCompat() throws {
+    func testIgnoresUnknownKeysForForwardCompat() throws {
         let url = fileURL()
-        try write(#"""
-            {"default":"X{{transcript}}Y","overrides":{"com.tinyspeck.slackmacgap":"slack tone"}}
-            """#, to: url)
+        try write(#"{"default":"X{{transcript}}Y","futureKey":42}"#, to: url)
 
         let store = PresetStore(fileURL: url, materializeIfMissing: false)
 
         XCTAssertEqual(store.defaultPreset().promptTemplate, "X{{transcript}}Y")
+    }
+
+    // MARK: - Overrides (Slice 4)
+
+    func testParsesOverridesAndResolvesByBundleID() throws {
+        let url = fileURL()
+        try write(#"""
+            {"default":"DEF","overrides":{"com.tinyspeck.slackmacgap":"SLACK","com.apple.mail":"MAIL"}}
+            """#, to: url)
+
+        let store = PresetStore(fileURL: url, materializeIfMissing: false)
+
+        XCTAssertEqual(store.preset(for: "com.tinyspeck.slackmacgap").promptTemplate, "SLACK")
+        XCTAssertEqual(store.preset(for: "com.tinyspeck.slackmacgap").name, "com.tinyspeck.slackmacgap")
+        XCTAssertEqual(store.preset(for: "com.apple.mail").promptTemplate, "MAIL")
+        XCTAssertEqual(store.preset(for: "com.unknown.app").promptTemplate, "DEF")
+        XCTAssertEqual(store.preset(for: nil).promptTemplate, "DEF")
+    }
+
+    func testSkipsEmptyOverrideTemplates() throws {
+        let url = fileURL()
+        try write(#"""
+            {"default":"DEF","overrides":{"com.a":"","com.b":"REAL"}}
+            """#, to: url)
+
+        let store = PresetStore(fileURL: url, materializeIfMissing: false)
+
+        XCTAssertEqual(store.preset(for: "com.a").promptTemplate, "DEF") // empty skipped
+        XCTAssertEqual(store.preset(for: "com.b").promptTemplate, "REAL")
+    }
+
+    func testSkipsNonStringOverrideValues() throws {
+        let url = fileURL()
+        try write(#"""
+            {"default":"DEF","overrides":{"com.a":42,"com.b":"REAL"}}
+            """#, to: url)
+
+        let store = PresetStore(fileURL: url, materializeIfMissing: false)
+
+        XCTAssertEqual(store.preset(for: "com.a").promptTemplate, "DEF")
+        XCTAssertEqual(store.preset(for: "com.b").promptTemplate, "REAL")
+    }
+
+    func testReloadUpdatesOverrides() throws {
+        let url = fileURL()
+        try write(#"{"default":"D1","overrides":{"com.a":"V1"}}"#, to: url)
+        let store = PresetStore(fileURL: url, materializeIfMissing: false)
+        XCTAssertEqual(store.preset(for: "com.a").promptTemplate, "V1")
+
+        try write(#"{"default":"D2","overrides":{"com.a":"V2","com.b":"VB"}}"#, to: url)
+        try store.reload()
+
+        XCTAssertEqual(store.preset(for: "com.a").promptTemplate, "V2")
+        XCTAssertEqual(store.preset(for: "com.b").promptTemplate, "VB")
+        XCTAssertEqual(store.defaultPreset().promptTemplate, "D2")
+    }
+
+    func testReloadClearsRemovedOverrides() throws {
+        let url = fileURL()
+        try write(#"{"default":"D","overrides":{"com.a":"V"}}"#, to: url)
+        let store = PresetStore(fileURL: url, materializeIfMissing: false)
+        XCTAssertEqual(store.preset(for: "com.a").promptTemplate, "V")
+
+        try write(#"{"default":"D"}"#, to: url)
+        try store.reload()
+
+        XCTAssertEqual(store.preset(for: "com.a").promptTemplate, "D") // override gone, falls back
     }
 
     // MARK: - Reload
