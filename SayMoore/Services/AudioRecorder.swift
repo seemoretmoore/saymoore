@@ -1,5 +1,6 @@
 import AVFoundation
 import Foundation
+import os
 
 @MainActor
 final class AudioRecorder {
@@ -10,7 +11,8 @@ final class AudioRecorder {
     private let ringBuffer = AudioRingBuffer(capacity: bufferCapacityFrames)
     private var converter: AudioFormatConverter?
     private(set) var isRecording = false
-    private var lastErrorLogTime: ContinuousClock.Instant?
+    // Tap-callback runs on the audio thread; lock-protect the rate-limit timestamp.
+    private let errorLogLock = OSAllocatedUnfairLock<ContinuousClock.Instant?>(initialState: nil)
 
     func start() throws {
         guard !isRecording else { return }
@@ -36,10 +38,17 @@ final class AudioRecorder {
                 let bp = UnsafeBufferPointer(start: ch, count: frames)
                 _ = ring.write(bp)
             } catch {
-                // Rate-limit converter error logs to 1/sec
-                if let last = self?.lastErrorLogTime, ContinuousClock.now - last < .seconds(1) { return }
-                self?.lastErrorLogTime = ContinuousClock.now
-                Log.audio.error("AudioRecorder converter error: \(error, privacy: .public)")
+                // Rate-limit converter error logs to 1/sec across audio-thread invocations.
+                guard let self else { return }
+                let shouldLog = self.errorLogLock.withLock { last -> Bool in
+                    let now = ContinuousClock.now
+                    if let last, now - last < .seconds(1) { return false }
+                    last = now
+                    return true
+                }
+                if shouldLog {
+                    Log.audio.error("AudioRecorder converter error: \(error, privacy: .public)")
+                }
             }
         }
 
