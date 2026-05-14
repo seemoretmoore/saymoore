@@ -28,6 +28,12 @@ final class PasteServiceTests: XCTestCase {
         var bundleID: String?
     }
 
+    // MARK: - A2: defaultRestoreDelay is 400ms (regression guard)
+
+    func testDefaultRestoreDelayIs400ms() {
+        XCTAssertEqual(PasteService.defaultRestoreDelay, .milliseconds(400))
+    }
+
     // MARK: - Happy path
 
     func testHappyPathPastesAndRestoresOriginalString() async throws {

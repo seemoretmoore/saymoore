@@ -62,13 +62,21 @@ final class NotificationCenterAdapter: @unchecked Sendable {
         case .cleanupFailed:
             return ("Cleanup failed", "Pasted raw transcript.")
         case .pasteFocusChanged:
-            return ("Focus changed", "Your text is on the clipboard — paste manually.")
+            return ("Focus changed", "Recording discarded — focus moved before paste.")
         case .pasteClipboardContended:
-            return ("Clipboard contended", "Your text is on the clipboard — paste manually.")
+            return ("Clipboard contended", "Recording discarded — clipboard was modified.")
         case .transcriptionGarbage:
             return ("No speech detected", "Recording discarded.")
         case .modelCorrupted:
             return ("Model corrupted", "Restart SayMoore to re-download.")
+        case .silentCapture:
+            return ("No audio captured", "Recording produced no audio — try again.")
+        case .recordingTooLong:
+            return ("Recording too long", "Recording exceeded 2-minute limit. Discarded.")
+        case .micPermissionDenied:
+            return ("Mic permission denied", "Grant microphone access in System Settings → Privacy & Security.")
+        case .audioEngineFailed:
+            return ("Audio engine failed", "Could not start recording. Check audio devices and try again.")
         default:
             return ("SayMoore error", String(describing: error))
         }

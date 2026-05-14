@@ -117,7 +117,9 @@ final class OllamaService: OllamaClient, @unchecked Sendable {
 
     static func mapURLError(_ err: URLError) -> SayMooreError {
         switch err.code {
-        case .timedOut:
+        case .timedOut, .cancelled:
+            // .cancelled lands here when the task-group timeout child won; treating it as
+            // a timeout preserves the user-facing semantics regardless of which child raced first.
             return .cleanupTimedOut
         case .cannotConnectToHost, .cannotFindHost, .networkConnectionLost, .notConnectedToInternet:
             return .ollamaUnreachable

@@ -80,7 +80,10 @@ final class PipelineCoordinator {
     }
 
     private func processSamples(_ samples: [Float]) async {
-        defer { processingTask = nil }
+        defer {
+            processingTask = nil
+            Log.pipeline.debug("processingTask cleared")
+        }
 
         if persistRawWAV, let dir = recordingsDir {
             let url = RecordingPaths.newRecordingURL(in: dir)
@@ -119,9 +122,11 @@ final class PipelineCoordinator {
         } catch let e as SayMooreError {
             Log.paste.error("paste failed: \(String(describing: e), privacy: .public)")
             appState.transition(to: .error(e))
+            onFallback?(e)
         } catch {
             Log.paste.error("paste failed: \(String(describing: error), privacy: .public)")
             appState.transition(to: .error(.pasteInjectionFailed))
+            onFallback?(.pasteInjectionFailed)
         }
 
         capturedBundleID = nil
@@ -153,10 +158,13 @@ final class PipelineCoordinator {
     }
 
     private func transitionToError(_ error: Error) {
+        capturedBundleID = nil
         if let smError = error as? SayMooreError {
             appState.transition(to: .error(smError))
+            // onFallback is the single error→banner path. Originally cleanup-only;
+            // widened so silentCapture / recordingTooLong / paste errors also surface.
+            onFallback?(smError)
         }
-        capturedBundleID = nil
         appState.transition(to: .idle)
     }
 }

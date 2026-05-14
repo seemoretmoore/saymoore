@@ -20,10 +20,16 @@ final class WhisperTranscriptionService: TranscriptionService, @unchecked Sendab
     }
 
     deinit {
-        lock.lock()
-        wasFreed = true
-        if let ctx { whisper_free(ctx); self.ctx = nil }
-        lock.unlock()
+        // Serialize through the work queue: the strong-self capture in transcribe's
+        // serial.async block ensures deinit cannot fire from within the queue, so this
+        // sync hop is safe and guarantees no in-flight whisper_full uses freed ctx.
+        serial.sync {
+            lock.lock()
+            wasFreed = true
+            if let ctx { whisper_free(ctx); self.ctx = nil }
+            lock.unlock()
+            Log.transcribe.debug("WhisperTranscriptionService freed ctx")
+        }
     }
 
     func transcribe(samples: [Float], sampleRate: Int) async throws -> Transcript {
