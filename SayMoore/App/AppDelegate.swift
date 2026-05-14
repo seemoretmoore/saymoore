@@ -12,14 +12,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var transcription: TranscriptionService?
     private var coordinator: PipelineCoordinator?
     private let hotkey = HotkeyService()
+    private let presets = PresetStore()
     private var menuBar: MenuBarController?
     private var bootstrap: ModelBootstrap?
     private var bootstrapWindow: ModelDownloadWindow?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Log.app.info("SayMoore launched (v\(Bundle.main.shortVersion, privacy: .public))")
+        Task.detached(priority: .utility) {
+            var code: SecCode?
+            guard SecCodeCopySelf([], &code) == errSecSuccess, let code else { return }
+            var staticCode: SecStaticCode?
+            guard SecCodeCopyStaticCode(code, [], &staticCode) == errSecSuccess, let staticCode else { return }
+            var infoCF: CFDictionary?
+            guard SecCodeCopySigningInformation(staticCode, SecCSFlags(rawValue: kSecCSSigningInformation), &infoCF) == errSecSuccess,
+                  let info = infoCF as? [String: Any] else { return }
+            let ident = info[kSecCodeInfoIdentifier as String] as? String ?? "?"
+            let flags = info[kSecCodeInfoFlags as String] as? UInt32 ?? 0
+            let cdhash = (info[kSecCodeInfoUnique as String] as? Data)?.map { String(format: "%02x", $0) }.joined() ?? "?"
+            Log.app.info("signing: ident=\(ident, privacy: .public) flags=0x\(String(flags, radix: 16), privacy: .public) cdhash=\(cdhash, privacy: .public)")
+        }
         NSApp.setActivationPolicy(.accessory)
-        menuBar = MenuBarController(appState: appState)
+        menuBar = MenuBarController(appState: appState, presets: presets)
 
         Task { @MainActor in
             await bootstrapModelThenStart()
@@ -71,7 +85,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.transcription = svc
 
         let ollama = OllamaService()
-        let cleanup = CleanupService(client: ollama, presets: PresetStore())
+        let cleanup = CleanupService(client: ollama, presets: presets)
         let notifier = NotificationCenterAdapter.shared
 
         let coord = PipelineCoordinator(

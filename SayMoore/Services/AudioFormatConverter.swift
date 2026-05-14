@@ -35,7 +35,10 @@ final class AudioFormatConverter {
         var convError: NSError?
         let status = converter.convert(to: out, error: &convError) { _, outStatus in
             if consumed {
-                outStatus.pointee = .endOfStream
+                // .noDataNow (not .endOfStream): this converter is reused across many
+                // tap buffers. Signaling end-of-stream finalizes the resampler and all
+                // subsequent buffers produce 0 frames.
+                outStatus.pointee = .noDataNow
                 return nil
             }
             consumed = true
