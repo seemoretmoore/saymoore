@@ -18,6 +18,7 @@ enum SayMooreError: Error {
     case watchdogTimeout
     case recordingTooLong
     case silentCapture
+    case ollamaEndpointUntrusted
 
     enum Permission: String, Sendable {
         case microphone, accessibility, inputMonitoring
@@ -61,6 +62,7 @@ extension SayMooreError: Equatable {
         case .recordingTooLong: return 15
         case .silentCapture: return 16
         case .permissionRevokedMidSession: return 17
+        case .ollamaEndpointUntrusted: return 18
         }
     }
 

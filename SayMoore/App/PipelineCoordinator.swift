@@ -18,6 +18,10 @@ final class PipelineCoordinator {
     private var capturedBundleID: String?
     private var processingTask: Task<Void, Never>?
 
+    /// When true, the pipeline refuses to start recording and posts the
+    /// `.ollamaEndpointUntrusted` banner. Set by AppDelegate after the trust probe.
+    var blocked: Bool = false
+
     #if DEBUG
     init(
         appState: AppState,
@@ -59,6 +63,11 @@ final class PipelineCoordinator {
     #endif
 
     func toggle(bundleID: String?) {
+        if blocked {
+            Log.pipeline.error("Toggle blocked — Ollama endpoint untrusted")
+            onFallback?(.ollamaEndpointUntrusted)
+            return
+        }
         if let t = processingTask, !t.isCancelled {
             Log.pipeline.debug("Toggle ignored — pipeline in flight")
             return
