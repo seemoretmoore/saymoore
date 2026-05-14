@@ -65,7 +65,8 @@ final class PasteServiceTests: XCTestCase {
             XCTAssertEqual(captured, "com.apple.TextEdit")
             XCTAssertEqual(current, "com.tinyspeck.slackmacgap")
             XCTAssertEqual(kb.pastes, 0, "must not Cmd-V into wrong app")
-            XCTAssertEqual(pb.current, "hi", "transcript stays on clipboard for manual paste")
+            // A1: defer restores original clipboard ("previous-clipboard"), not the transcript
+            XCTAssertEqual(pb.current, "previous-clipboard", "original clipboard restored on focusChanged throw")
         } catch {
             XCTFail("wrong error: \(error)")
         }
@@ -115,7 +116,87 @@ final class PasteServiceTests: XCTestCase {
             try await svc.paste(transcript: "hi", capturedBundleID: "com.apple.TextEdit")
             XCTFail("expected pasteClipboardContended")
         } catch SayMooreError.pasteClipboardContended {
-            XCTAssertEqual(pb.current, "interloper", "must not clobber whatever wrote after us")
+            // A1: defer restores the saved "before" value, not the interloper's write
+            XCTAssertEqual(pb.current, "before", "defer restores original clipboard on contention throw")
+        } catch {
+            XCTFail("wrong error: \(error)")
+        }
+    }
+
+    // MARK: - Clipboard restore on throw paths (A1)
+
+    func testFocusChangedRestoresClipboard() async {
+        let pb = FakePasteboard()
+        pb.current = "before"
+        pb.changeCount = 0
+        let kb = FakeKeyboard()
+        let fm = FakeFrontmost(); fm.bundleID = "com.apple.Notes"
+
+        let svc = PasteService(
+            pasteboard: pb, keyboard: kb, frontmost: fm,
+            restoreDelay: .zero
+        )
+        do {
+            try await svc.paste(transcript: "leaked", capturedBundleID: "com.apple.TextEdit")
+            XCTFail("expected pasteFocusChanged")
+        } catch SayMooreError.pasteFocusChanged {
+            XCTAssertEqual(pb.current, "before", "clipboard must be restored even on focusChanged throw")
+        } catch {
+            XCTFail("wrong error: \(error)")
+        }
+    }
+
+    func testContentionThrowRestoresClipboard() async {
+        let pb = FakePasteboard()
+        pb.current = "before"
+        pb.changeCount = 1
+        let kb = FakeKeyboard()
+        let fm = FakeFrontmost(); fm.bundleID = "com.apple.TextEdit"
+
+        let svc = PasteService(
+            pasteboard: pb, keyboard: kb, frontmost: fm,
+            restoreDelay: .zero
+        )
+        kb.onPostCmdV = {
+            pb.changeCount += 1
+            pb.current = "interloper"
+        }
+
+        do {
+            try await svc.paste(transcript: "leaked", capturedBundleID: "com.apple.TextEdit")
+            XCTFail("expected pasteClipboardContended")
+        } catch SayMooreError.pasteClipboardContended {
+            // A1: saved clipboard ("before") must be restored, not the interloper's value
+            XCTAssertEqual(pb.current, "before", "clipboard must be restored on contention throw")
+        } catch {
+            XCTFail("wrong error: \(error)")
+        }
+    }
+
+    // MARK: - Overrun throws pasteClipboardContended (A2)
+
+    func testOverrunThrowsClipboardContended() async {
+        let pb = FakePasteboard()
+        pb.current = "before"
+        pb.changeCount = 0
+        let kb = FakeKeyboard()
+        let fm = FakeFrontmost(); fm.bundleID = "com.apple.TextEdit"
+
+        // restoreDelay of 1ns; the real wall-clock elapsed will exceed 2×400ms cap via 0 sleep
+        // We can't easily make wall-clock exceed 800ms in unit tests, so we use a zero delay
+        // and verify the guard path still works. The overrun guard compares elapsed > restoreDelay*2
+        // using the *instance* restoreDelay (400ms after A2), but with zero restoreDelay the
+        // overrun condition is elapsed > 0, which is always true — so this confirms the throw fires.
+        let svc = PasteService(
+            pasteboard: pb, keyboard: kb, frontmost: fm,
+            restoreDelay: .nanoseconds(1)
+        )
+        do {
+            try await svc.paste(transcript: "x", capturedBundleID: "com.apple.TextEdit")
+            // If overrun guard throws, we never reach restore — defer must still restore clipboard.
+            XCTFail("expected pasteClipboardContended from overrun")
+        } catch SayMooreError.pasteClipboardContended {
+            XCTAssertEqual(pb.current, "before", "clipboard restored even on overrun throw")
         } catch {
             XCTFail("wrong error: \(error)")
         }

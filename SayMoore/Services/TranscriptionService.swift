@@ -11,19 +11,25 @@ final class WhisperTranscriptionService: TranscriptionService, @unchecked Sendab
     private let modelPath: String
     private let serial = DispatchQueue(label: "com.seemoretmoore.saymoore.whisper", qos: .userInitiated)
     private var ctx: OpaquePointer?
+    // Guards ctx and wasFreed; serial queue serializes work but deinit may race from any thread.
+    private let lock = NSLock()
+    private var wasFreed = false
 
     init(modelPath: String) {
         self.modelPath = modelPath
     }
 
     deinit {
-        if let ctx { whisper_free(ctx) }
+        lock.lock()
+        wasFreed = true
+        if let ctx { whisper_free(ctx); self.ctx = nil }
+        lock.unlock()
     }
 
     func transcribe(samples: [Float], sampleRate: Int) async throws -> Transcript {
         precondition(sampleRate == 16_000, "WhisperTranscriptionService requires 16kHz")
         return try await withCheckedThrowingContinuation { cont in
-            serial.async {
+            serial.async { [self] in
                 do {
                     let result = try self.transcribeSync(samples: samples)
                     cont.resume(returning: result)
@@ -36,6 +42,12 @@ final class WhisperTranscriptionService: TranscriptionService, @unchecked Sendab
 
     private func transcribeSync(samples: [Float]) throws -> Transcript {
         if ctx == nil {
+            lock.lock()
+            guard !wasFreed else {
+                lock.unlock()
+                throw SayMooreError.transcriptionFailed(underlying: WhisperBridgeError.modelInitFailed)
+            }
+            lock.unlock()
             var cparams = whisper_context_default_params()
             cparams.use_gpu = true
             cparams.flash_attn = true
@@ -45,9 +57,13 @@ final class WhisperTranscriptionService: TranscriptionService, @unchecked Sendab
             ctx = c
             Log.transcribe.info("whisper context loaded from \(self.modelPath, privacy: .public)")
         }
-        guard let ctx else {
+        lock.lock()
+        guard !wasFreed, let ctx else {
+            lock.unlock()
             throw SayMooreError.transcriptionFailed(underlying: WhisperBridgeError.modelInitFailed)
         }
+        let localCtx = ctx
+        lock.unlock()
 
         var fparams = whisper_full_default_params(WHISPER_SAMPLING_GREEDY)
         fparams.print_realtime = false
@@ -63,19 +79,19 @@ final class WhisperTranscriptionService: TranscriptionService, @unchecked Sendab
         defer { free(lang) }
 
         let status = samples.withUnsafeBufferPointer { buf -> Int32 in
-            whisper_full(ctx, fparams, buf.baseAddress, Int32(buf.count))
+            whisper_full(localCtx, fparams, buf.baseAddress, Int32(buf.count))
         }
         guard status == 0 else {
             throw SayMooreError.transcriptionFailed(underlying: WhisperBridgeError.fullFailed(status: status))
         }
 
-        let nSegments = whisper_full_n_segments(ctx)
+        let nSegments = whisper_full_n_segments(localCtx)
         var segments: [TranscriptSegment] = []
         segments.reserveCapacity(Int(nSegments))
         for i in 0..<nSegments {
-            let cstr = whisper_full_get_segment_text(ctx, i)
+            let cstr = whisper_full_get_segment_text(localCtx, i)
             let text = cstr.map { String(cString: $0) } ?? ""
-            let prob = whisper_full_get_segment_no_speech_prob(ctx, i)
+            let prob = whisper_full_get_segment_no_speech_prob(localCtx, i)
             segments.append(TranscriptSegment(text: text, noSpeechProb: prob))
         }
         return Transcript.fromSegments(segments)

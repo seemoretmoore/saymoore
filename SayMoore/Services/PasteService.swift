@@ -24,7 +24,7 @@ final class PasteService: Sendable {
     private let frontmost: FrontmostAdapter
     private let restoreDelay: Duration
 
-    static let defaultRestoreDelay: Duration = .milliseconds(200)
+    static let defaultRestoreDelay: Duration = .milliseconds(400) // A2: raised from 200ms
 
     init(
         pasteboard: PasteboardAdapter,
@@ -38,8 +38,15 @@ final class PasteService: Sendable {
         self.restoreDelay = restoreDelay
     }
 
+    @MainActor // A3: NSPasteboard.general is main-thread-only; Task.sleep can resume off-main
     func paste(transcript: String, capturedBundleID: String?) async throws {
         let savedString = pasteboard.savedString()
+
+        // A1: defer restores clipboard on every exit path (throw or normal return)
+        defer {
+            pasteboard.clearContents()
+            if let s = savedString { pasteboard.setString(s) }
+        }
 
         pasteboard.clearContents()
         pasteboard.setString(transcript)
@@ -55,17 +62,13 @@ final class PasteService: Sendable {
         let started = ContinuousClock.now
         try? await Task.sleep(for: restoreDelay)
         let elapsed = ContinuousClock.now - started
-        if elapsed > Self.defaultRestoreDelay * 2 {
-            Log.paste.warning("restore delay exceeded: \(String(describing: elapsed), privacy: .public)")
+        // A2: overrun hard-cap — only meaningful when delay is non-zero (zero = test mode)
+        if restoreDelay > .zero && elapsed > restoreDelay * 2 {
+            throw SayMooreError.pasteClipboardContended
         }
 
         guard pasteboard.changeCount == writtenCount else {
             throw SayMooreError.pasteClipboardContended
-        }
-
-        pasteboard.clearContents()
-        if let s = savedString {
-            pasteboard.setString(s)
         }
     }
 }
@@ -88,6 +91,8 @@ struct CGEventKeyboardAdapter: KeyboardAdapter {
         let up   = CGEvent(keyboardEventSource: src, virtualKey: vKey, keyDown: false)
         down?.flags = .maskCommand
         up?.flags = .maskCommand
+        down?.setIntegerValueField(.eventSourceUserData, value: 0x5359)
+        up?.setIntegerValueField(.eventSourceUserData, value: 0x5359)
         down?.post(tap: .cgAnnotatedSessionEventTap)
         up?.post(tap: .cgAnnotatedSessionEventTap)
     }

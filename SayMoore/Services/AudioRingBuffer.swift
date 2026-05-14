@@ -7,6 +7,7 @@ final class AudioRingBuffer: @unchecked Sendable {
     private var head = 0
     private var tail = 0
     private var count = 0
+    private(set) var overflowed: Bool = false
 
     init(capacity: Int) {
         precondition(capacity > 0)
@@ -25,6 +26,7 @@ final class AudioRingBuffer: @unchecked Sendable {
     func write(_ samples: [Float]) -> Int {
         lock.lock(); defer { lock.unlock() }
         let canWrite = min(samples.count, capacity - count)
+        if samples.count > canWrite { overflowed = true }
         for i in 0..<canWrite {
             storage[(head + i) % capacity] = samples[i]
         }
@@ -37,6 +39,7 @@ final class AudioRingBuffer: @unchecked Sendable {
     func write(_ buffer: UnsafeBufferPointer<Float>) -> Int {
         lock.lock(); defer { lock.unlock() }
         let canWrite = min(buffer.count, capacity - count)
+        if buffer.count > canWrite { overflowed = true }
         for i in 0..<canWrite {
             storage[(head + i) % capacity] = buffer[i]
         }
@@ -55,5 +58,13 @@ final class AudioRingBuffer: @unchecked Sendable {
         tail = head
         count = 0
         return out
+    }
+
+    func reset() {
+        lock.lock(); defer { lock.unlock() }
+        head = 0
+        tail = 0
+        count = 0
+        overflowed = false
     }
 }

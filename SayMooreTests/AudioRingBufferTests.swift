@@ -34,4 +34,35 @@ final class AudioRingBufferTests: XCTestCase {
         _ = rb.drainAll()
         XCTAssertEqual(rb.drainAll(), [])
     }
+
+    // C2: overflow flag set when write exceeds capacity
+    func testOverflowFlagSetOnExceedCapacity() {
+        let capacity = 100
+        let rb = AudioRingBuffer(capacity: capacity)
+        XCTAssertFalse(rb.overflowed)
+        // Write capacity + 100 samples in one call
+        let samples = [Float](repeating: 1.0, count: capacity + 100)
+        _ = rb.write(samples)
+        XCTAssertTrue(rb.overflowed, "overflowed should be true after write exceeds capacity")
+        // Only capacity samples buffered
+        let drained = rb.drainAll()
+        XCTAssertEqual(drained.count, capacity)
+    }
+
+    // C2: reset() clears overflow flag
+    func testResetClearsOverflowFlag() {
+        let rb = AudioRingBuffer(capacity: 4)
+        _ = rb.write([Float](repeating: 0, count: 10))
+        XCTAssertTrue(rb.overflowed)
+        rb.reset()
+        XCTAssertFalse(rb.overflowed)
+        XCTAssertEqual(rb.drainAll(), [])
+    }
+
+    // C2: no overflow flag when write fits exactly
+    func testNoOverflowFlagWhenWriteFits() {
+        let rb = AudioRingBuffer(capacity: 8)
+        _ = rb.write([Float](repeating: 0, count: 8))
+        XCTAssertFalse(rb.overflowed)
+    }
 }

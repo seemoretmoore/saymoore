@@ -10,6 +10,7 @@ final class PipelineCoordinatorTests: XCTestCase {
         var startError: Error?
         var stopError: Error?
         private(set) var startCalls = 0
+        private(set) var stopCalls = 0
         private(set) var cancelCalls = 0
 
         func start() throws {
@@ -18,6 +19,7 @@ final class PipelineCoordinatorTests: XCTestCase {
             isRecording = true
         }
         func stop() throws -> [Float] {
+            stopCalls += 1
             if let e = stopError { throw e }
             isRecording = false
             return samples
@@ -138,9 +140,9 @@ final class PipelineCoordinatorTests: XCTestCase {
         XCTAssertEqual(state.state, .idle)
     }
 
-    // MARK: - Paste focus changed leaves transcript on clipboard
+    // MARK: - A1: Paste focus changed restores clipboard (no transcript leak)
 
-    func testPasteFocusChangedTranscriptStaysOnClipboard() async throws {
+    func testPasteFocusChangedRestoresClipboard() async throws {
         let (rec, trans, pb, kb, fm, paste) = makeServices(
             transcript: Transcript(text: "hello", averageNoSpeechProb: 0)
         )
@@ -157,7 +159,7 @@ final class PipelineCoordinatorTests: XCTestCase {
 
         XCTAssertEqual(state.state, .idle)
         XCTAssertEqual(kb.pastes, 0)
-        XCTAssertEqual(pb.current, "hello", "transcript stays on clipboard for manual paste")
+        XCTAssertEqual(pb.current, "previous", "A1: clipboard restored to prior contents, not leaking transcript")
     }
 
     // MARK: - Cancel via Esc
@@ -207,23 +209,103 @@ final class PipelineCoordinatorTests: XCTestCase {
         XCTAssertEqual(kb.pastes, 1)
         _ = trans // silence unused
     }
+
+    // MARK: - C1: Triple-tap deduplication
+
+    func testTripleTapOnlyRunsOnePipeline() async throws {
+        let (rec, _, _, kb, fm, paste) = makeServices()
+        let blocking = BlockingTranscriptionService()
+        fm.bundleID = "com.apple.TextEdit"
+        let state = AppState()
+        let coord = PipelineCoordinator(
+            appState: state, recorder: rec,
+            transcription: blocking, paste: paste
+        )
+        coord.toggle(bundleID: "com.apple.TextEdit") // .idle → .recording
+        coord.toggle(bundleID: nil)                  // .recording → kicks off pipeline
+        coord.toggle(bundleID: nil)                  // should be ignored — pipeline in flight
+        coord.toggle(bundleID: nil)                  // should be ignored — pipeline in flight
+
+        XCTAssertEqual(rec.stopCalls, 1, "stop must be called exactly once despite triple-tap")
+
+        blocking.resume(.success(Transcript(text: "hello", averageNoSpeechProb: 0)))
+        try await Task.sleep(for: .milliseconds(50))
+        XCTAssertEqual(state.state, .idle)
+        XCTAssertEqual(kb.pastes, 1)
+    }
+
+    // MARK: - C1: Synchronous state transition before Task continuation
+
+    func testStateTranscribingBeforeTaskContinuationRuns() async throws {
+        let (rec, _, _, _, fm, paste) = makeServices()
+        let blocking = BlockingTranscriptionService()
+        fm.bundleID = "com.apple.TextEdit"
+        let state = AppState()
+        let coord = PipelineCoordinator(
+            appState: state, recorder: rec,
+            transcription: blocking, paste: paste
+        )
+        coord.toggle(bundleID: "com.apple.TextEdit")
+        XCTAssertEqual(state.state, .recording)
+
+        coord.toggle(bundleID: nil)
+        // State must be .transcribing synchronously — before any await resumes.
+        XCTAssertEqual(state.state, .transcribing, "state should be .transcribing synchronously after stop toggle")
+        XCTAssertEqual(rec.stopCalls, 1, "stop must have been called synchronously")
+
+        blocking.resume(.success(Transcript(text: "hello", averageNoSpeechProb: 0)))
+        try await Task.sleep(for: .milliseconds(50))
+        XCTAssertEqual(state.state, .idle)
+    }
+
+    // MARK: - C1: processingTask nil after pipeline completes
+
+    func testProcessingTaskClearedAfterPipelineCompletes() async throws {
+        let (rec, trans, _, _, fm, paste) = makeServices()
+        fm.bundleID = "com.apple.TextEdit"
+        let state = AppState()
+        let coord = PipelineCoordinator(
+            appState: state, recorder: rec,
+            transcription: trans, paste: paste
+        )
+        coord.toggle(bundleID: "com.apple.TextEdit")
+        coord.toggle(bundleID: nil)
+        try await Task.sleep(for: .milliseconds(80))
+        XCTAssertEqual(state.state, .idle)
+        // Second full recording cycle must succeed (processingTask was cleared).
+        coord.toggle(bundleID: "com.apple.TextEdit")
+        XCTAssertEqual(state.state, .recording)
+        coord.toggle(bundleID: nil)
+        try await Task.sleep(for: .milliseconds(80))
+        XCTAssertEqual(state.state, .idle)
+        XCTAssertEqual(rec.stopCalls, 2, "two full cycles = two stop calls")
+    }
 }
 
 @MainActor
 private final class BlockingTranscriptionService: TranscriptionService {
     private var continuation: CheckedContinuation<Transcript, Error>?
+    private var pendingResult: Result<Transcript, Error>?
+
     nonisolated func transcribe(samples: [Float], sampleRate: Int) async throws -> Transcript {
         return try await withCheckedThrowingContinuation { cont in
             Task { @MainActor in
-                self.continuation = cont
+                if let r = self.pendingResult {
+                    self.pendingResult = nil
+                    cont.resume(with: r)
+                } else {
+                    self.continuation = cont
+                }
             }
         }
     }
     func resume(_ result: Result<Transcript, Error>) {
-        switch result {
-        case .success(let t): continuation?.resume(returning: t)
-        case .failure(let e): continuation?.resume(throwing: e)
+        if let c = continuation {
+            continuation = nil
+            c.resume(with: result)
+        } else {
+            // resume() arrived before transcribe stored the continuation — buffer it.
+            pendingResult = result
         }
-        continuation = nil
     }
 }

@@ -87,6 +87,52 @@ final class OllamaServiceTests: XCTestCase {
         }
     }
 
+    // E1: wall-clock timeout fires before slow response
+    func testGenerateWallClockTimeoutThrowsCleanupTimedOut() async {
+        StubURLProtocol.stub = .init(
+            handler: { _ in
+                Thread.sleep(forTimeInterval: 2.0)
+                let body = #"{"response":"late"}"#.data(using: .utf8)!
+                let resp = HTTPURLResponse(url: URL(string: "http://localhost:11434/api/generate")!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+                return (resp, body, nil)
+            }
+        )
+        let svc = makeService()
+        let start = Date()
+        do {
+            _ = try await svc.generate(model: "m", prompt: "p", timeout: 0.5)
+            XCTFail("expected throw")
+        } catch let err as SayMooreError {
+            XCTAssertEqual(err, .cleanupTimedOut)
+            XCTAssertLessThan(Date().timeIntervalSince(start), 1.2, "should time out well under 2s")
+        } catch {
+            XCTFail("wrong error: \(error)")
+        }
+    }
+
+    // E2: tags() hard 3s wall-clock timeout throws ollamaUnreachable
+    func testTagsWallClockTimeoutThrowsOllamaUnreachable() async {
+        StubURLProtocol.stub = .init(
+            handler: { _ in
+                Thread.sleep(forTimeInterval: 5.0)
+                let body = #"{"models":[]}"#.data(using: .utf8)!
+                let resp = HTTPURLResponse(url: URL(string: "http://localhost:11434/api/tags")!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+                return (resp, body, nil)
+            }
+        )
+        let svc = makeService()
+        let start = Date()
+        do {
+            _ = try await svc.tags()
+            XCTFail("expected throw")
+        } catch let err as SayMooreError {
+            XCTAssertEqual(err, .ollamaUnreachable)
+            XCTAssertLessThan(Date().timeIntervalSince(start), 3.5, "should time out well under 5s")
+        } catch {
+            XCTFail("wrong error: \(error)")
+        }
+    }
+
     func testTagsHappyPathReturnsModelNames() async throws {
         StubURLProtocol.stub = .init(
             handler: { _ in

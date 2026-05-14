@@ -10,10 +10,11 @@ final class AudioRecorder {
     private let ringBuffer = AudioRingBuffer(capacity: bufferCapacityFrames)
     private var converter: AudioFormatConverter?
     private(set) var isRecording = false
+    private var lastErrorLogTime: ContinuousClock.Instant?
 
     func start() throws {
         guard !isRecording else { return }
-        _ = ringBuffer.drainAll()
+        ringBuffer.reset()
 
         let input = engine.inputNode
         let inputFormat = input.outputFormat(forBus: 0)
@@ -27,12 +28,19 @@ final class AudioRecorder {
         self.converter = conv
 
         let ring = self.ringBuffer
-        input.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { buffer, _ in
-            guard let converted = try? conv.convert(buffer) else { return }
-            guard let ch = converted.floatChannelData?[0] else { return }
-            let frames = Int(converted.frameLength)
-            let bp = UnsafeBufferPointer(start: ch, count: frames)
-            _ = ring.write(bp)
+        input.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { [weak self] buffer, _ in
+            do {
+                let converted = try conv.convert(buffer)
+                guard let ch = converted.floatChannelData?[0] else { return }
+                let frames = Int(converted.frameLength)
+                let bp = UnsafeBufferPointer(start: ch, count: frames)
+                _ = ring.write(bp)
+            } catch {
+                // Rate-limit converter error logs to 1/sec
+                if let last = self?.lastErrorLogTime, ContinuousClock.now - last < .seconds(1) { return }
+                self?.lastErrorLogTime = ContinuousClock.now
+                Log.audio.error("AudioRecorder converter error: \(error, privacy: .public)")
+            }
         }
 
         do {
@@ -50,11 +58,21 @@ final class AudioRecorder {
         guard isRecording else {
             throw SayMooreError.audioEngineFailed(underlying: RecorderError.notRecording)
         }
+        // C6: removeTap → stop → 20ms drain-fence → drainAll; prevents in-flight tap callbacks racing drain
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
         isRecording = false
+        Thread.sleep(forTimeInterval: 0.020)
 
         let samples = ringBuffer.drainAll()
+
+        if ringBuffer.overflowed {
+            throw SayMooreError.recordingTooLong
+        }
+        if samples.isEmpty {
+            throw SayMooreError.silentCapture
+        }
+
         Log.audio.info("AudioRecorder stopped (\(samples.count, privacy: .public) samples)")
         return samples
     }
@@ -80,5 +98,11 @@ final class AudioRecorder {
     enum RecorderError: Error {
         case invalidInputFormat
         case notRecording
+    }
+
+    // Test-only: mark as recording without starting the engine.
+    // Allows unit tests to exercise stop() paths without AVAudioEngine.
+    func _startForTests() {
+        isRecording = true
     }
 }

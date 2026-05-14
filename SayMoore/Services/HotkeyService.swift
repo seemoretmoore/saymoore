@@ -60,9 +60,21 @@ final class HotkeyService {
         runLoopSource = nil
     }
 
-    fileprivate func handle(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
+    // B1: helper — wipes stale state and re-enables the tap after a system disable.
+    func resetAfterTapDisable() {
+        lastFlags = []
+        recognizer = HotkeyRecognizer()
+        if let tap { CGEvent.tapEnable(tap: tap, enable: true) }
+    }
+
+    func handle(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-            if let tap { CGEvent.tapEnable(tap: tap, enable: true) }
+            resetAfterTapDisable()
+            return Unmanaged.passUnretained(event)
+        }
+
+        // B2: pass through our own synthesized Cmd-V events without processing.
+        if event.getIntegerValueField(.eventSourceUserData) == 0x5359 {
             return Unmanaged.passUnretained(event)
         }
 
@@ -73,6 +85,9 @@ final class HotkeyService {
             onCancel?()
             return nil
         }
+
+        // B3: modifier virtual key codes (kVK_Command=0x37, kVK_Shift=0x38, kVK_Option=0x3A, kVK_Control=0x3B)
+        let modifierKeyCodes: Set<Int> = [0x37, 0x38, 0x3A, 0x3B]
 
         switch type {
         case .flagsChanged:
@@ -88,8 +103,14 @@ final class HotkeyService {
                 emit(.otherKey(at: now))
             }
 
-        case .keyDown, .keyUp:
-            emit(.otherKey(at: now))
+        case .keyDown:
+            // B3: only emit .otherKey (which clears pendingBundleID) for real character keys.
+            if !modifierKeyCodes.contains(keyCode) {
+                emit(.otherKey(at: now))
+            }
+
+        case .keyUp:
+            break
 
         default:
             break
