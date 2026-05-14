@@ -21,12 +21,12 @@ This repo is being built one vertical slice at a time. Track progress in the [Gi
 
 | Slice | Description | Status |
 |---|---|---|
-| 0 | Scaffold + signing + cross-cutting infrastructure | ⬜ |
-| 1 | Hotkey + audio capture | ⬜ |
-| 1.5 | Whisper SwiftPM spike | ⬜ |
-| 2 | Pipeline coordinator + transcription + paste-with-integrity | ⬜ |
-| 3 | Default cleanup preset via Ollama | ⬜ |
-| 4 | Per-app preset overrides | ⬜ |
+| 0 | Scaffold + signing + cross-cutting infrastructure | ✅ |
+| 1 | Hotkey + audio capture | ✅ |
+| 1.5 | Whisper SwiftPM spike | ✅ |
+| 2 | Pipeline coordinator + transcription + paste-with-integrity | ✅ |
+| 3 | Default cleanup preset via Ollama | ✅ |
+| 4 | Per-app preset overrides | ✅ |
 | 5 | VAD + length cap + warnings | ⬜ |
 | 6 | Polish UI: pulse + sounds + cursor indicator + recording HUD | ⬜ |
 | 7 | History log | ⬜ |

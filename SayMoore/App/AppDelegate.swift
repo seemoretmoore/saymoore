@@ -13,6 +13,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var coordinator: PipelineCoordinator?
     private let hotkey = HotkeyService()
     private let presets = PresetStore()
+    private var presetWatcher: PresetWatcher?
     private var menuBar: MenuBarController?
     private var bootstrap: ModelBootstrap?
     private var bootstrapWindow: ModelDownloadWindow?
@@ -43,7 +44,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         hotkey.stop()
+        presetWatcher?.stop()
         Log.app.info("SayMoore terminating")
+    }
+
+    private func reloadPresetsAndNotifyOnFailure() {
+        do {
+            try presets.reload()
+            Log.presets.info("presets.json reloaded")
+        } catch {
+            Log.presets.error("presets reload failed: \(String(describing: error), privacy: .public)")
+            Task { @MainActor in
+                NotificationCenterAdapter.shared.notify(
+                    title: "Invalid presets.json",
+                    body: "Using last-good config."
+                )
+            }
+        }
     }
 
     // MARK: - Bootstrap
@@ -128,6 +145,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hotkey.onCancel = { [weak self] in
             self?.coordinator?.cancel()
         }
+        let presetsDir = PresetStore.defaultFileURL.deletingLastPathComponent()
+        let watcher = PresetWatcher(directory: presetsDir, fileName: "presets.json") { [weak self] in
+            Task { @MainActor in self?.reloadPresetsAndNotifyOnFailure() }
+        }
+        watcher.start()
+        self.presetWatcher = watcher
+
         hotkey.start()
         Log.app.info("pipeline armed")
     }

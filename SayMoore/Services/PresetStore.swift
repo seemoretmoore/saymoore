@@ -38,10 +38,12 @@ final class PresetStore: @unchecked Sendable {
     private let fileURL: URL
     private let lock = NSLock()
     private var currentDefault: Preset
+    private var currentOverrides: [String: Preset] = [:]
 
     /// Production initializer. Ensures the preset directory exists, materializes
-    /// `presets.json` with the current hardcoded baseline on first launch, and
-    /// loads the on-disk default. Load errors fall back to the hardcoded baseline.
+    /// `presets.json` from the bundled example (or hardcoded baseline as fallback)
+    /// on first launch, and loads the on-disk default + overrides. Load errors
+    /// fall back to the hardcoded baseline.
     convenience init() {
         self.init(fileURL: Self.defaultFileURL, materializeIfMissing: true)
     }
@@ -55,13 +57,13 @@ final class PresetStore: @unchecked Sendable {
         if materializeIfMissing {
             try? Self.ensureDirectory(for: fileURL)
             if !FileManager.default.fileExists(atPath: fileURL.path) {
-                try? Self.writeBaselineFile(at: fileURL)
+                try? Self.materializeBaseline(at: fileURL)
             }
         }
 
-        // Best-effort initial load; on failure we keep the hardcoded baseline.
         if let loaded = try? Self.loadFromDisk(at: fileURL) {
-            self.currentDefault = loaded
+            self.currentDefault = loaded.defaultPreset
+            self.currentOverrides = loaded.overrides
         }
     }
 
@@ -70,22 +72,32 @@ final class PresetStore: @unchecked Sendable {
         return currentDefault
     }
 
-    /// v1: returns the default preset for any bundleID. Slice 4 will introduce overrides.
+    /// Resolve a preset for the given bundle ID. Falls back to the default when
+    /// `bundleID` is nil or has no override entry.
     func preset(for bundleID: String?) -> Preset {
-        _ = bundleID
-        return defaultPreset()
+        lock.lock(); defer { lock.unlock() }
+        if let id = bundleID, let override = currentOverrides[id] {
+            return override
+        }
+        return currentDefault
     }
 
-    /// Re-read `presets.json` and replace the in-memory default. On error the
-    /// previous in-memory preset is retained and the error is rethrown so the
-    /// caller can surface a notification.
+    /// Re-read `presets.json` and atomically replace the in-memory default +
+    /// overrides. On error the previous in-memory state is retained and the
+    /// error is rethrown so the caller can surface a notification.
     func reload() throws {
         let loaded = try Self.loadFromDisk(at: fileURL)
         lock.lock(); defer { lock.unlock() }
-        currentDefault = loaded
+        currentDefault = loaded.defaultPreset
+        currentOverrides = loaded.overrides
     }
 
     // MARK: - Disk
+
+    private struct LoadedPresets {
+        let defaultPreset: Preset
+        let overrides: [String: Preset]
+    }
 
     private static func ensureDirectory(for fileURL: URL) throws {
         let dir = fileURL.deletingLastPathComponent()
@@ -99,19 +111,28 @@ final class PresetStore: @unchecked Sendable {
         }
     }
 
-    private static func writeBaselineFile(at url: URL) throws {
-        let payload: [String: String] = ["default": defaultPromptTemplate]
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        let data = try encoder.encode(payload)
-        try data.write(to: url, options: .atomic)
+    /// Seed `presets.json` on first launch. Prefers the bundled
+    /// `presets.example.json` (ships with 5 per-app overrides); falls back to a
+    /// hardcoded default-only payload when the bundle resource is unavailable
+    /// (tests, command-line contexts).
+    private static func materializeBaseline(at url: URL) throws {
+        if let bundled = Bundle.main.url(forResource: "presets.example", withExtension: "json"),
+           let data = try? Data(contentsOf: bundled) {
+            try data.write(to: url, options: .atomic)
+        } else {
+            let payload: [String: String] = ["default": defaultPromptTemplate]
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            let data = try encoder.encode(payload)
+            try data.write(to: url, options: .atomic)
+        }
         try? FileManager.default.setAttributes(
             [.posixPermissions: NSNumber(value: 0o600)],
             ofItemAtPath: url.path
         )
     }
 
-    private static func loadFromDisk(at url: URL) throws -> Preset {
+    private static func loadFromDisk(at url: URL) throws -> LoadedPresets {
         let data: Data
         do {
             data = try Data(contentsOf: url)
@@ -119,8 +140,6 @@ final class PresetStore: @unchecked Sendable {
             throw PresetStoreError.fileUnreadable(error.localizedDescription)
         }
 
-        // Tolerant decode: only require the `default` key. Unknown keys
-        // (e.g., Slice 4's `overrides`) are ignored.
         let object: Any
         do {
             object = try JSONSerialization.jsonObject(with: data, options: [])
@@ -136,6 +155,17 @@ final class PresetStore: @unchecked Sendable {
             throw PresetStoreError.missingDefaultKey
         }
 
-        return Preset(name: "default", promptTemplate: defaultTemplate)
+        var overrides: [String: Preset] = [:]
+        if let rawOverrides = dict["overrides"] as? [String: Any] {
+            for (bundleID, value) in rawOverrides {
+                guard let template = value as? String, !template.isEmpty else { continue }
+                overrides[bundleID] = Preset(name: bundleID, promptTemplate: template)
+            }
+        }
+
+        return LoadedPresets(
+            defaultPreset: Preset(name: "default", promptTemplate: defaultTemplate),
+            overrides: overrides
+        )
     }
 }

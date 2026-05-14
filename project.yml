@@ -61,6 +61,18 @@ targets:
         script: |
           set -e
           APP="${BUILT_PRODUCTS_DIR}/${WRAPPER_NAME}"
+          # During the test action this script can run before SayMooreTests has
+          # finished writing its xctest bundle contents. An incomplete embedded
+          # bundle would make the outer-app codesign fail recursively. Skip the
+          # whole assert in that case — the SayMooreTests post-build phase will
+          # handle signing once everything is in place.
+          for sub in "$APP"/Contents/PlugIns/*.xctest; do
+            [ -e "$sub" ] || continue
+            if [ ! -e "$sub/Contents/Info.plist" ]; then
+              echo "note: skipping signing assert; $sub is not yet complete"
+              exit 0
+            fi
+          done
           # Xcode 26 with empty DEVELOPMENT_TEAM skips app-bundle CodeSign; do it here.
           # Sign embedded bundles (e.g. test xctest under PlugIns/) first, then outer app.
           for sub in "$APP"/Contents/PlugIns/*.xctest "$APP"/Contents/Frameworks/*.framework; do
