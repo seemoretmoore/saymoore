@@ -37,6 +37,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.accessory)
         menuBar = MenuBarController(appState: appState, presets: presets)
 
+        #if !DEBUG
+        // Belt-and-braces: clear any orphan raw-WAVs left by a prior Debug
+        // session on this machine. Release builds never write to this dir
+        // (persistRawWAV is compile-time-stripped) so it should stay empty.
+        RecordingPaths.purgeAll(in: RecordingPaths.defaultDirectory())
+        #endif
+
         Task { @MainActor in
             await bootstrapModelThenStart()
         }

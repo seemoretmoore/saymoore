@@ -94,6 +94,33 @@ final class PresetWatcherTests: XCTestCase {
         wait(for: [exp], timeout: 1.5)
     }
 
+    func testTeardownRaceUnderRapidStartStopAndWrites() throws {
+        // Spin up and tear down 50 watchers while writing to the dir in parallel.
+        // Asserts: no crash, no UAF (would surface as a sanitizer/runtime trap).
+        // The +1 retain via FSEventStreamContext.retain/release should keep
+        // each watcher alive across any in-flight callback.
+        let writeURL = tmpDir.appendingPathComponent("presets.json")
+        let writer = DispatchQueue(label: "test.writer", qos: .userInitiated)
+        let stop = DispatchSemaphore(value: 0)
+        writer.async {
+            var counter = 0
+            while stop.wait(timeout: .now()) == .timedOut {
+                try? Data("\(counter)".utf8).write(to: writeURL, options: .atomic)
+                counter += 1
+            }
+        }
+        defer { stop.signal() }
+
+        for _ in 0..<50 {
+            autoreleasepool {
+                let w = PresetWatcher(directory: tmpDir, fileName: "presets.json") { }
+                w.start()
+                // Don't sleep — exercise immediate-stop after start.
+                w.stop()
+            }
+        }
+    }
+
     func testStartOnMissingDirectoryIsNoOp() {
         let missing = tmpDir.appendingPathComponent("does-not-exist", isDirectory: true)
         let watcher = PresetWatcher(directory: missing, fileName: "presets.json") {

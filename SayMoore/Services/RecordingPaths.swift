@@ -23,6 +23,19 @@ enum RecordingPaths {
         return url
     }
 
+    /// Remove every file under `dir`. Intended for Release-build launch as
+    /// belt-and-braces against orphan WAVs left by prior Debug sessions on a
+    /// machine that has switched to a Release-signed daily build. No-op if the
+    /// directory does not exist. Tolerates partial failures (logged, swallowed).
+    static func purgeAll(in dir: URL) {
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: dir.path) else { return }
+        let contents = (try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? []
+        for url in contents {
+            try? fm.removeItem(at: url)
+        }
+    }
+
     static func newRecordingURL(in dir: URL) -> URL {
         let f = ISO8601DateFormatter()
         f.formatOptions = [.withInternetDateTime]

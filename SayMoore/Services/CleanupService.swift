@@ -10,13 +10,13 @@ final class CleanupService: TranscriptCleaning, @unchecked Sendable {
 
     private let client: OllamaClient
     private let model: String
-    private let presets: PresetStore
+    private let presets: PresetResolving
     private let timeout: TimeInterval
 
     init(
         client: OllamaClient,
         model: String = CleanupService.defaultModel,
-        presets: PresetStore = PresetStore(),
+        presets: PresetResolving,
         timeout: TimeInterval = CleanupService.defaultTimeout
     ) {
         self.client = client
