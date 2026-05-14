@@ -22,7 +22,8 @@ settings:
     GCC_TREAT_WARNINGS_AS_ERRORS: NO
   configs:
     Debug:
-      CODE_SIGN_IDENTITY: "-"
+      CODE_SIGN_IDENTITY: "SayMoore Self-Sign"
+      ENABLE_HARDENED_RUNTIME: NO
     Release:
       CODE_SIGN_IDENTITY: "SayMoore Self-Sign"
 
@@ -49,10 +50,27 @@ targets:
           - "$(inherited)"
           - "@executable_path/../Frameworks"
         COMBINE_HIDPI_IMAGES: YES
+        CODE_SIGNING_REQUIRED: YES
     dependencies:
       - framework: Vendor/whisper.xcframework
         embed: true
         codeSign: true
+    postBuildScripts:
+      - name: Assert non-adhoc signing
+        basedOnDependencyAnalysis: false
+        script: |
+          set -e
+          APP="${BUILT_PRODUCTS_DIR}/${WRAPPER_NAME}"
+          # Xcode 26 with empty DEVELOPMENT_TEAM skips app-bundle CodeSign; do it here.
+          if ! codesign -dvv "$APP" 2>&1 | grep -q 'Authority=SayMoore Self-Sign'; then
+            codesign --force --sign "${CODE_SIGN_IDENTITY}" "$APP"
+          fi
+          if codesign -dvv "$APP" 2>&1 | grep -qE 'flags=0x2\(adhoc\)|Signature=adhoc'; then
+            echo "error: $APP is ad-hoc signed — TCC grants will not survive rebuild. Run scripts/setup-signing.sh and ensure Debug CODE_SIGN_IDENTITY=\"SayMoore Self-Sign\"." >&2
+            exit 1
+          fi
+          codesign -dvv "$APP" 2>&1 | grep -q 'Authority=SayMoore Self-Sign' || {
+            echo "error: expected Authority=SayMoore Self-Sign" >&2; exit 1; }
     scheme:
       testTargets:
         - SayMooreTests
