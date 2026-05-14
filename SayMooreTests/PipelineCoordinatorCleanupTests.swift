@@ -114,4 +114,33 @@ final class PipelineCoordinatorCleanupTests: XCTestCase {
         XCTAssertEqual(kb.pastes, 1)
         XCTAssertEqual(state.state, .idle)
     }
+
+    // MARK: - C5: Hyphenated-word tokenizer
+
+    func testHyphenatedPhraseNotTakenAsFastPath() async throws {
+        // "state-of-the-art now" splits to 5 tokens on punctuation+whitespace,
+        // so it must NOT take the fast path (threshold is 3).
+        let (coord, state, cleanup, _, kb) = makeRig(
+            transcript: Transcript(text: "state-of-the-art now", averageNoSpeechProb: 0)
+        )
+        coord.toggle(bundleID: "com.apple.TextEdit")
+        coord.toggle(bundleID: nil)
+        try await Task.sleep(for: .milliseconds(80))
+        XCTAssertEqual(cleanup.calls, 1, "hyphenated phrase has >3 tokens — cleanup must run")
+        XCTAssertEqual(kb.pastes, 1)
+        XCTAssertEqual(state.state, .idle)
+    }
+
+    func testThreeWhitespaceSeparatedWordsStillTakeFastPath() async throws {
+        // "yes please now" = 3 tokens → fast path, cleanup skipped.
+        let (coord, state, cleanup, _, kb) = makeRig(
+            transcript: Transcript(text: "yes please now", averageNoSpeechProb: 0)
+        )
+        coord.toggle(bundleID: "com.apple.TextEdit")
+        coord.toggle(bundleID: nil)
+        try await Task.sleep(for: .milliseconds(80))
+        XCTAssertEqual(cleanup.calls, 0, "3-word transcript must still take fast path")
+        XCTAssertEqual(kb.pastes, 1)
+        XCTAssertEqual(state.state, .idle)
+    }
 }

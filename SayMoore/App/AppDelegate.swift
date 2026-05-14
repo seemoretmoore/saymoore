@@ -16,6 +16,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var menuBar: MenuBarController?
     private var bootstrap: ModelBootstrap?
     private var bootstrapWindow: ModelDownloadWindow?
+    private let audioFeedback = AudioFeedbackService()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Log.app.info("SayMoore launched (v\(Bundle.main.shortVersion, privacy: .public))")
@@ -112,6 +113,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             } catch {
                 Log.cleanup.error("ollama probe error: \(String(describing: error), privacy: .public)")
             }
+        }
+
+        appState.onTransition = { [audioFeedback] old, new in
+            audioFeedback.handle(old: old, new: new)
         }
 
         hotkey.isRecording = { [weak self] in

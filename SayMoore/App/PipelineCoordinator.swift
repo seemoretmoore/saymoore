@@ -14,6 +14,7 @@ final class PipelineCoordinator {
     private let onFallback: (@MainActor (SayMooreError) -> Void)?
 
     private var capturedBundleID: String?
+    private var processingTask: Task<Void, Never>?
 
     init(
         appState: AppState,
@@ -36,11 +37,24 @@ final class PipelineCoordinator {
     }
 
     func toggle(bundleID: String?) {
+        if let t = processingTask, !t.isCancelled {
+            Log.pipeline.debug("Toggle ignored — pipeline in flight")
+            return
+        }
         switch appState.state {
         case .idle:
             beginRecording(bundleID: bundleID)
         case .recording:
-            Task { await self.endRecordingAndProcess() }
+            let samples: [Float]
+            do {
+                samples = try recorder.stop()
+            } catch {
+                Log.audio.error("recorder.stop failed: \(String(describing: error), privacy: .public)")
+                transitionToError(error)
+                return
+            }
+            appState.transition(to: .transcribing)
+            processingTask = Task { await self.processSamples(samples) }
         default:
             Log.pipeline.debug("Toggle ignored in state \(String(describing: self.appState.state), privacy: .public)")
         }
@@ -65,23 +79,14 @@ final class PipelineCoordinator {
         }
     }
 
-    private func endRecordingAndProcess() async {
-        let samples: [Float]
-        do {
-            samples = try recorder.stop()
-        } catch {
-            Log.audio.error("recorder.stop failed: \(String(describing: error), privacy: .public)")
-            transitionToError(error)
-            return
-        }
+    private func processSamples(_ samples: [Float]) async {
+        defer { processingTask = nil }
 
         if persistRawWAV, let dir = recordingsDir {
             let url = RecordingPaths.newRecordingURL(in: dir)
             try? AudioRecorder.writeWAV(samples: samples, to: url)
             Log.pipeline.debug("debug WAV → \(url.path, privacy: .public)")
         }
-
-        appState.transition(to: .transcribing)
 
         let transcript: Transcript
         do {
@@ -126,7 +131,8 @@ final class PipelineCoordinator {
     private func maybeCleanup(raw: String) async -> String {
         guard let cleanup else { return raw }
 
-        let words = raw.split(whereSeparator: { $0.isWhitespace }).count
+        let separators = CharacterSet.punctuationCharacters.union(.whitespacesAndNewlines)
+        let words = raw.components(separatedBy: separators).filter { !$0.isEmpty }.count
         if words <= Self.fastPathMaxWordCount {
             Log.cleanup.info("fast-path: \(words, privacy: .public) words ≤ \(Self.fastPathMaxWordCount, privacy: .public), skipping cleanup")
             return raw

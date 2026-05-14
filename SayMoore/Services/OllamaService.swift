@@ -41,9 +41,20 @@ final class OllamaService: OllamaClient, @unchecked Sendable {
         let data: Data
         let response: URLResponse
         do {
-            (data, response) = try await session.data(for: req)
+            (data, response) = try await withThrowingTaskGroup(of: (Data, URLResponse).self) { group in
+                group.addTask { try await self.session.data(for: req) }
+                group.addTask {
+                    try await Task.sleep(for: .seconds(timeout))
+                    throw SayMooreError.cleanupTimedOut
+                }
+                let result = try await group.next()!
+                group.cancelAll()
+                return result
+            }
         } catch let urlErr as URLError {
             throw Self.mapURLError(urlErr)
+        } catch let smErr as SayMooreError {
+            throw smErr
         } catch {
             throw SayMooreError.cleanupFailed(underlying: error)
         }
@@ -76,11 +87,22 @@ final class OllamaService: OllamaClient, @unchecked Sendable {
         let data: Data
         let response: URLResponse
         do {
-            (data, response) = try await session.data(for: req)
+            (data, response) = try await withThrowingTaskGroup(of: (Data, URLResponse).self) { group in
+                group.addTask { try await self.session.data(for: req) }
+                group.addTask {
+                    try await Task.sleep(for: .seconds(3))
+                    throw SayMooreError.ollamaUnreachable
+                }
+                let result = try await group.next()!
+                group.cancelAll()
+                return result
+            }
+        } catch let smErr as SayMooreError {
+            throw smErr
         } catch let urlErr as URLError {
             throw Self.mapURLError(urlErr)
         } catch {
-            throw SayMooreError.cleanupFailed(underlying: error)
+            throw SayMooreError.ollamaUnreachable
         }
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             throw SayMooreError.ollamaUnreachable
