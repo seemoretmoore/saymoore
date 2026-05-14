@@ -18,6 +18,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var bootstrap: ModelBootstrap?
     private var bootstrapWindow: ModelDownloadWindow?
     private let audioFeedback = AudioFeedbackService()
+    /// Set to true when the Ollama endpoint trust probe returns `.untrustedEndpoint`.
+    /// PipelineCoordinator checks this flag before starting a recording.
+    var ollamaEndpointBlocked = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Log.app.info("SayMoore launched (v\(Bundle.main.shortVersion, privacy: .public))")
@@ -44,8 +47,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         RecordingPaths.purgeAll(in: RecordingPaths.defaultDirectory())
         #endif
 
-        Task { @MainActor in
+        Task {
             await bootstrapModelThenStart()
+        }
+
+        // M2: Ollama endpoint trust probe — runs concurrently with bootstrap.
+        Task {
+            let result = await OllamaTrustProbe().probe()
+            switch result {
+            case .trusted:
+                break
+            case .untrustedEndpoint:
+                ollamaEndpointBlocked = true
+                coordinator?.blocked = true
+                NotificationCenterAdapter.shared.notify(.ollamaEndpointUntrusted)
+                Log.app.error("ollama endpoint trust probe: untrusted — dictation blocked")
+            case .probeFailed(let error):
+                Log.app.error("ollama endpoint trust probe failed (non-fatal): \(String(describing: error), privacy: .public)")
+            }
         }
     }
 
@@ -61,12 +80,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Log.presets.info("presets.json reloaded")
         } catch {
             Log.presets.error("presets reload failed: \(String(describing: error), privacy: .public)")
-            Task { @MainActor in
-                NotificationCenterAdapter.shared.notify(
-                    title: "Invalid presets.json",
-                    body: "Using last-good config."
-                )
-            }
+            // Q1: method is already @MainActor — no inner Task needed.
+            let body = Self.bannerCopy(for: error)
+            NotificationCenterAdapter.shared.notify(title: "Preset error", body: body)
+        }
+    }
+
+    /// M6: Map each `PresetStoreError` discriminant to concise user-actionable copy.
+    /// Extracted as a static function for testability.
+    nonisolated static func bannerCopy(for error: Error) -> String {
+        guard let e = error as? PresetStoreError else {
+            return "presets.json error — using last-good config."
+        }
+        switch e {
+        case .fileUnreadable:
+            return "Couldn't read presets.json — using last-good config."
+        case .malformedJSON:
+            return "presets.json has invalid JSON — using last-good config."
+        case .missingDefaultKey:
+            return "presets.json missing 'default' entry — using last-good config."
+        case .fileTooLarge:
+            return "presets.json is too large (max 512 KB) — using last-good config."
+        case .tooManyOverrides:
+            return "Too many app overrides in presets.json (max 100) — using last-good config."
+        case .templateTooLong:
+            return "A presets.json template is too long (max 16 KB) — using last-good config."
+        case .notRegularFile:
+            return "presets.json is not a regular file — using last-good config."
         }
     }
 

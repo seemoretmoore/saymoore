@@ -73,6 +73,8 @@ final class NotificationCenterAdapter: @unchecked Sendable {
             return ("No audio captured", "Recording produced no audio — try again.")
         case .recordingTooLong:
             return ("Recording too long", "Recording exceeded 2-minute limit. Discarded.")
+        case .ollamaEndpointUntrusted:
+            return ("Ollama endpoint untrusted", "An unknown process is listening on port 11434. Dictation is disabled.")
         case .micPermissionDenied:
             return ("Mic permission denied", "Grant microphone access in System Settings → Privacy & Security.")
         case .audioEngineFailed:
