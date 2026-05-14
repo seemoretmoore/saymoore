@@ -26,6 +26,14 @@ final class MenuBarController: NSObject {
         menu.addItem(titleItem)
         menu.addItem(.separator())
 
+        let editItem = NSMenuItem(
+            title: "Edit Presets…",
+            action: #selector(editPresetsTapped),
+            keyEquivalent: ""
+        )
+        editItem.target = self
+        menu.addItem(editItem)
+
         let reloadItem = NSMenuItem(
             title: "Reload Presets",
             action: #selector(reloadPresetsTapped),
@@ -46,6 +54,13 @@ final class MenuBarController: NSObject {
             .receive(on: RunLoop.main)
             .sink { [weak self] state in self?.apply(state) }
             .store(in: &cancellables)
+    }
+
+    @objc private func editPresetsTapped() {
+        // Re-materialize if the user deleted the file since launch —
+        // activateFileViewerSelecting silently no-ops on missing paths.
+        presets.ensureMaterialized()
+        NSWorkspace.shared.activateFileViewerSelecting([presets.fileURL])
     }
 
     @objc private func reloadPresetsTapped() {

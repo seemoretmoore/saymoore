@@ -10,12 +10,15 @@ final class PipelineCoordinator {
     private let cleanup: TranscriptCleaning?
     private let paste: PasteService
     private let recordingsDir: URL?
+    #if DEBUG
     private let persistRawWAV: Bool
+    #endif
     private let onFallback: (@MainActor (SayMooreError) -> Void)?
 
     private var capturedBundleID: String?
     private var processingTask: Task<Void, Never>?
 
+    #if DEBUG
     init(
         appState: AppState,
         recorder: AudioRecording,
@@ -35,6 +38,25 @@ final class PipelineCoordinator {
         self.persistRawWAV = persistRawWAV
         self.onFallback = onFallback
     }
+    #else
+    init(
+        appState: AppState,
+        recorder: AudioRecording,
+        transcription: TranscriptionService,
+        paste: PasteService,
+        cleanup: TranscriptCleaning? = nil,
+        recordingsDir: URL? = nil,
+        onFallback: (@MainActor (SayMooreError) -> Void)? = nil
+    ) {
+        self.appState = appState
+        self.recorder = recorder
+        self.transcription = transcription
+        self.cleanup = cleanup
+        self.paste = paste
+        self.recordingsDir = recordingsDir
+        self.onFallback = onFallback
+    }
+    #endif
 
     func toggle(bundleID: String?) {
         if let t = processingTask, !t.isCancelled {
@@ -85,11 +107,13 @@ final class PipelineCoordinator {
             Log.pipeline.debug("processingTask cleared")
         }
 
+        #if DEBUG
         if persistRawWAV, let dir = recordingsDir {
             let url = RecordingPaths.newRecordingURL(in: dir)
             try? AudioRecorder.writeWAV(samples: samples, to: url)
             Log.pipeline.debug("debug WAV → \(url.path, privacy: .public)")
         }
+        #endif
 
         let transcript: Transcript
         do {

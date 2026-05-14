@@ -201,7 +201,7 @@ final class PresetStoreTests: XCTestCase {
         XCTAssertEqual(store.defaultPreset().promptTemplate, "good")
     }
 
-    // MARK: - bundleID is currently ignored (Slice 4 will change this)
+    // MARK: - Bundle-ID-less resolution falls through to default
 
     func testPresetForBundleIDReturnsDefault() throws {
         let url = fileURL()
@@ -209,5 +209,112 @@ final class PresetStoreTests: XCTestCase {
         let store = PresetStore(fileURL: url, materializeIfMissing: false)
         XCTAssertEqual(store.preset(for: "com.apple.Slack").promptTemplate, "v")
         XCTAssertEqual(store.preset(for: nil).promptTemplate, "v")
+    }
+
+    // MARK: - ensureMaterialized (A4)
+
+    func testEnsureMaterializedRecreatesDeletedFile() throws {
+        let url = fileURL()
+        let store = PresetStore(fileURL: url, materializeIfMissing: true)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: url.path))
+
+        try FileManager.default.removeItem(at: url)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
+
+        store.ensureMaterialized()
+        XCTAssertTrue(FileManager.default.fileExists(atPath: url.path))
+    }
+
+    func testEnsureMaterializedIsIdempotent() throws {
+        let url = fileURL()
+        try write(#"{"default":"CUSTOM"}"#, to: url)
+        let store = PresetStore(fileURL: url, materializeIfMissing: false)
+
+        store.ensureMaterialized()
+        store.ensureMaterialized()
+
+        let data = try Data(contentsOf: url)
+        let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        XCTAssertEqual(obj?["default"] as? String, "CUSTOM")
+    }
+
+    // MARK: - Bounds (A2)
+
+    func testReloadRejectsOversizeFile() throws {
+        let url = fileURL()
+        try write(#"{"default":"v"}"#, to: url)
+        let store = PresetStore(fileURL: url, materializeIfMissing: false)
+
+        // Build a payload that's a valid JSON shape but larger than the cap.
+        let padding = String(repeating: "x", count: PresetStore.maxFileBytes + 100)
+        try write("{\"default\":\"v\",\"_pad\":\"\(padding)\"}", to: url)
+
+        do {
+            try store.reload()
+            XCTFail("expected fileTooLarge")
+        } catch let e as PresetStoreError {
+            if case .fileTooLarge = e {} else { XCTFail("wrong error: \(e)") }
+        }
+        // Last-good retained.
+        XCTAssertEqual(store.defaultPreset().promptTemplate, "v")
+    }
+
+    func testReloadRejectsTooManyOverrides() throws {
+        let url = fileURL()
+        try write(#"{"default":"v"}"#, to: url)
+        let store = PresetStore(fileURL: url, materializeIfMissing: false)
+
+        var overrides: [String: String] = [:]
+        for i in 0...(PresetStore.maxOverridesCount) {
+            overrides["bundle.id.\(i)"] = "t"
+        }
+        let data = try JSONSerialization.data(withJSONObject: ["default": "new", "overrides": overrides])
+        try data.write(to: url, options: .atomic)
+
+        do {
+            try store.reload()
+            XCTFail("expected tooManyOverrides")
+        } catch let e as PresetStoreError {
+            if case .tooManyOverrides = e {} else { XCTFail("wrong error: \(e)") }
+        }
+        XCTAssertEqual(store.defaultPreset().promptTemplate, "v")
+    }
+
+    func testReloadRejectsOversizeTemplate() throws {
+        let url = fileURL()
+        try write(#"{"default":"v"}"#, to: url)
+        let store = PresetStore(fileURL: url, materializeIfMissing: false)
+
+        let huge = String(repeating: "x", count: PresetStore.maxTemplateBytes + 1)
+        let data = try JSONSerialization.data(withJSONObject: ["default": "new", "overrides": ["com.example": huge]])
+        try data.write(to: url, options: .atomic)
+
+        do {
+            try store.reload()
+            XCTFail("expected templateTooLong")
+        } catch let e as PresetStoreError {
+            if case .templateTooLong = e {} else { XCTFail("wrong error: \(e)") }
+        }
+        XCTAssertEqual(store.defaultPreset().promptTemplate, "v")
+    }
+
+    func testReloadRejectsNonRegularFile() throws {
+        // Replace presets.json with a directory of the same name.
+        // (Symlink-to-/dev/null doesn't trip isRegularFile on this system —
+        // a directory is the most portable non-regular substitute.)
+        let url = fileURL()
+        try write(#"{"default":"v"}"#, to: url)
+        let store = PresetStore(fileURL: url, materializeIfMissing: false)
+
+        try FileManager.default.removeItem(at: url)
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: false)
+
+        do {
+            try store.reload()
+            XCTFail("expected notRegularFile")
+        } catch let e as PresetStoreError {
+            if case .notRegularFile = e {} else { XCTFail("wrong error: \(e)") }
+        }
+        XCTAssertEqual(store.defaultPreset().promptTemplate, "v")
     }
 }

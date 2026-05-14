@@ -3,6 +3,12 @@ import XCTest
 
 final class CleanupServiceTests: XCTestCase {
 
+    private struct StubPresets: PresetResolving {
+        func preset(for bundleID: String?) -> Preset {
+            Preset(name: "stub", promptTemplate: "{{transcript}}")
+        }
+    }
+
     private final class FakeOllama: OllamaClient, @unchecked Sendable {
         var nextResult: Result<String, Error> = .success("")
         private(set) var lastModel: String?
@@ -26,7 +32,7 @@ final class CleanupServiceTests: XCTestCase {
     func testCleanHappyPathPassesPromptAndModel() async throws {
         let fake = FakeOllama()
         fake.nextResult = .success("  cleaned text  ")
-        let svc = CleanupService(client: fake, model: "qwen2.5:7b-instruct", presets: PresetStore())
+        let svc = CleanupService(client: fake, model: "qwen2.5:7b-instruct", presets: StubPresets())
         let out = try await svc.clean("uh hi there", bundleID: nil)
         XCTAssertEqual(out, "cleaned text")
         XCTAssertEqual(fake.lastModel, "qwen2.5:7b-instruct")
@@ -37,7 +43,7 @@ final class CleanupServiceTests: XCTestCase {
     func testCleanPropagatesOllamaUnreachable() async {
         let fake = FakeOllama()
         fake.nextResult = .failure(SayMooreError.ollamaUnreachable)
-        let svc = CleanupService(client: fake)
+        let svc = CleanupService(client: fake, presets: StubPresets())
         do {
             _ = try await svc.clean("hi there everyone", bundleID: nil)
             XCTFail("expected throw")
@@ -51,7 +57,7 @@ final class CleanupServiceTests: XCTestCase {
     func testCleanPropagatesTimeout() async {
         let fake = FakeOllama()
         fake.nextResult = .failure(SayMooreError.cleanupTimedOut)
-        let svc = CleanupService(client: fake)
+        let svc = CleanupService(client: fake, presets: StubPresets())
         do {
             _ = try await svc.clean("hi there everyone", bundleID: nil)
             XCTFail("expected throw")

@@ -2,7 +2,20 @@
 
 Distilled from a four-agent adversarial review (UX / security / maintainability / codebase quality) of `a30e94e` on 2026-05-14, validated against actual code by the main reviewing thread. Nothing here was push-blocking; everything is queued work.
 
-## Bundle A — small mechanical cluster (next batch)
+## Status — Bundle A ✅ shipped 2026-05-14
+
+All six Bundle A items landed (commit hashes filled in after push). Each was adversarially re-reviewed during planning (security + senior-Swift lens) and the recommendations baked into implementation. Notable deviations from the original tickets:
+
+- **A2 banner copy** stays opaque ("Invalid presets.json — Using last-good config.") for every new typed error case — per-discriminant banner copy is folded into Bundle B's M6 (Slice 9 notification-coalescing). New typed errors differentiate in logs only until M6 ships.
+- **A2 bounds** relaxed from the ticket's 512 KB / 50 / 4 KB to **512 KB / 100 overrides / 16 KB per template** — 4 KB was too tight versus the default template's ~1.1 KB; 16 KB leaves room for prompt-engineering iteration.
+- **A2 fileTooLarge / templateTooLong payloads** dropped the `key:` field — bundle ID is logged privately, not exposed in the user-visible banner.
+- **A2 load path** rewritten to use `FileManager.attributesOfItem` (regular-file check, sidesteps `URL` resource-value caching) + `FileHandle.read(upToCount: max+1)` — single syscall path, no TOCTOU.
+- **A3** kept the **Release-only `RecordingPaths.purgeAll()` call** in `applicationDidFinishLaunching`, restored from the original "belt-and-braces" wording over my earlier "gate only" stance.
+- **A6** uses the **discriminant pattern** — a private exhaustive `discriminant: Int` switch makes new-case omissions a compile error, replacing the silent `default: false` footgun. Payload-bearing `Error` comparison switched from `String(describing:)` to `NSError.domain + .code`.
+
+Remaining: Bundle B (deferred to natural slice homes), Bundle C (chore-pass nits).
+
+## Bundle A — small mechanical cluster (shipped)
 
 ### A1. Make PresetWatcher safe under teardown + concurrent calls (C1 + C2)
 - **Severity:** Critical (quit-only blast radius today)
