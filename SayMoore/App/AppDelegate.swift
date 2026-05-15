@@ -51,7 +51,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             await bootstrapModelThenStart()
         }
 
-        // M2: Ollama endpoint trust probe — runs concurrently with bootstrap.
+        // Trust probe — runs concurrently with bootstrap.
+        // C1: ollamaEndpointBlocked is the bridge flag: written here so startPipeline()
+        // can stamp the coordinator immediately on creation even if the probe already finished.
+        // M2: .probeFailed is fail-closed — dictation paused until trust can be confirmed.
         Task {
             let result = await OllamaTrustProbe().probe()
             switch result {
@@ -63,7 +66,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 NotificationCenterAdapter.shared.notify(.ollamaEndpointUntrusted)
                 Log.app.error("ollama endpoint trust probe: untrusted — dictation blocked")
             case .probeFailed(let error):
-                Log.app.error("ollama endpoint trust probe failed (non-fatal): \(String(describing: error), privacy: .public)")
+                // M2: fail-closed — treat verification failure as blocking.
+                ollamaEndpointBlocked = true
+                coordinator?.blocked = true
+                NotificationCenterAdapter.shared.notify(
+                    title: "SayMoore",
+                    body: "Couldn't verify Ollama trust — dictation paused. Check Console for details."
+                )
+                Log.app.fault("ollama endpoint trust probe failed — dictation blocked: \(String(describing: error), privacy: .public)")
             }
         }
     }
@@ -162,6 +172,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             recordingsDir: Self.recordingsDirIfPossible(),
             onFallback: { error in notifier.notify(error) }
         )
+        // C1: stamp blocked flag immediately so probe results that landed before
+        // coordinator was created are not silently lost.
+        coord.blocked = ollamaEndpointBlocked
         self.coordinator = coord
 
         // Fire-and-forget Ollama health probe.

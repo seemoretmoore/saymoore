@@ -147,6 +147,15 @@ final class PipelineCoordinator {
             return
         }
 
+        // M3: belt-and-braces — re-check blocked before the LLM cleanup step.
+        // The probe may have completed (and set blocked = true) while transcription
+        // was in flight. Abort cleanly rather than sending audio to an untrusted Ollama.
+        if blocked {
+            Log.pipeline.error("processSamples: blocked became true mid-pipeline — aborting")
+            transitionToError(SayMooreError.ollamaEndpointUntrusted)
+            return
+        }
+
         let cleaned = await maybeCleanup(raw: transcript.text)
 
         appState.transition(to: .pasting)

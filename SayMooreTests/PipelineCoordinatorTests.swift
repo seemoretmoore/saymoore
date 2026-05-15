@@ -258,6 +258,73 @@ final class PipelineCoordinatorTests: XCTestCase {
         XCTAssertEqual(state.state, .idle)
     }
 
+    // MARK: - C1: blocked flag wiring
+
+    /// C1: coordinator created with blocked=true refuses to start recording.
+    func testBlockedCoordinatorRefusesToRecord() async throws {
+        let (rec, _, _, _, _, paste) = makeServices()
+        let state = AppState()
+        var fallbackErrors: [SayMooreError] = []
+        let coord = PipelineCoordinator(
+            appState: state, recorder: rec,
+            transcription: FakeTranscriptionService(), paste: paste,
+            onFallback: { fallbackErrors.append($0) }
+        )
+        coord.blocked = true
+        coord.toggle(bundleID: nil)
+        XCTAssertEqual(state.state, .idle, "blocked coordinator must not start recording")
+        XCTAssertEqual(rec.startCalls, 0)
+        XCTAssertEqual(fallbackErrors.count, 1)
+        if case .ollamaEndpointUntrusted = fallbackErrors.first { } else {
+            XCTFail("expected .ollamaEndpointUntrusted fallback, got \(String(describing: fallbackErrors.first))")
+        }
+    }
+
+    /// C1: coordinator created with blocked=false starts recording normally.
+    func testUnblockedCoordinatorStartsRecording() async throws {
+        let (rec, _, _, _, fm, paste) = makeServices()
+        fm.bundleID = "com.apple.TextEdit"
+        let state = AppState()
+        let coord = PipelineCoordinator(
+            appState: state, recorder: rec,
+            transcription: FakeTranscriptionService(), paste: paste
+        )
+        coord.blocked = false
+        coord.toggle(bundleID: "com.apple.TextEdit")
+        XCTAssertEqual(state.state, .recording)
+        XCTAssertEqual(rec.startCalls, 1)
+        coord.cancel()
+    }
+
+    // MARK: - M3: Mid-pipeline blocked abort
+
+    /// M3: if blocked becomes true while transcription is in flight,
+    /// processSamples must abort before cleanup and return to idle.
+    func testMidPipelineBlockAbortBeforeCleanup() async throws {
+        let (rec, _, _, kb, fm, paste) = makeServices()
+        fm.bundleID = "com.apple.TextEdit"
+        let state = AppState()
+        let blocking = BlockingTranscriptionService()
+        var fallbackErrors: [SayMooreError] = []
+        let coord = PipelineCoordinator(
+            appState: state, recorder: rec,
+            transcription: blocking, paste: paste,
+            onFallback: { fallbackErrors.append($0) }
+        )
+        coord.toggle(bundleID: "com.apple.TextEdit") // start recording
+        coord.toggle(bundleID: nil)                  // stop → kicks off pipeline
+        // Transcription is now in flight. Set blocked before resuming it.
+        coord.blocked = true
+        blocking.resume(.success(Transcript(text: "hello world test", averageNoSpeechProb: 0)))
+        try await Task.sleep(for: .milliseconds(50))
+        XCTAssertEqual(state.state, .idle, "should return to idle after blocked abort")
+        XCTAssertEqual(kb.pastes, 0, "paste must not happen when blocked mid-pipeline")
+        XCTAssertTrue(
+            fallbackErrors.contains(where: { if case .ollamaEndpointUntrusted = $0 { return true } else { return false } }),
+            "should emit .ollamaEndpointUntrusted error"
+        )
+    }
+
     // MARK: - C1: processingTask nil after pipeline completes
 
     func testProcessingTaskClearedAfterPipelineCompletes() async throws {
