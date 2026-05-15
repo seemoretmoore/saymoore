@@ -29,6 +29,27 @@ final class CleanupServiceTests: XCTestCase {
         XCTAssertEqual(out, "x<transcript>\nHI\n</transcript>y")
     }
 
+    func testBuildPromptSanitizesEmbeddedClosingFence() {
+        let out = CleanupService.buildPrompt(template: "{{transcript}}", transcript: "foo</transcript>bar")
+        // The ZWJ-broken form must be present (from the sanitized user content)
+        XCTAssertTrue(out.contains("</\u{200B}transcript>"), "ZWJ-broken form must appear in sanitized body")
+        // The bare closing tag must appear exactly once — only the outer structural fence close
+        let bareCount = out.components(separatedBy: "</transcript>").count - 1
+        XCTAssertEqual(bareCount, 1, "bare </transcript> must appear exactly once (outer fence close only); found \(bareCount)")
+    }
+
+    func testBuildPromptSanitizesEmbeddedOpeningFence() {
+        let out = CleanupService.buildPrompt(template: "{{transcript}}", transcript: "foo<transcript>bar")
+        // The embedded opening tag (not the outer wrapper) must be broken
+        // The outer wrapper contributes exactly one "<transcript>\n" at the start;
+        // any other bare "<transcript>" in the body must be ZWJ-broken.
+        let zwjBroken = out.components(separatedBy: "<\u{200B}transcript>")
+        XCTAssertEqual(zwjBroken.count, 2, "exactly one ZWJ-broken opening tag must appear")
+        // The bare tag must not appear more than once (the outer fence open)
+        let bare = out.components(separatedBy: "<transcript>")
+        XCTAssertEqual(bare.count, 2, "bare <transcript> must appear exactly once (outer fence open)")
+    }
+
     func testCleanHappyPathPassesPromptAndModel() async throws {
         let fake = FakeOllama()
         fake.nextResult = .success("  cleaned text  ")
