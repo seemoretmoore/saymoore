@@ -9,6 +9,7 @@ final class PipelineCoordinator {
     private let transcription: TranscriptionService
     private let cleanup: TranscriptCleaning?
     private let paste: PasteService
+    private let presets: PresetResolving
     private let recordingsDir: URL?
     #if DEBUG
     private let persistRawWAV: Bool
@@ -28,6 +29,7 @@ final class PipelineCoordinator {
         recorder: AudioRecording,
         transcription: TranscriptionService,
         paste: PasteService,
+        presets: PresetResolving,
         cleanup: TranscriptCleaning? = nil,
         recordingsDir: URL? = nil,
         persistRawWAV: Bool = false,
@@ -38,6 +40,7 @@ final class PipelineCoordinator {
         self.transcription = transcription
         self.cleanup = cleanup
         self.paste = paste
+        self.presets = presets
         self.recordingsDir = recordingsDir
         self.persistRawWAV = persistRawWAV
         self.onFallback = onFallback
@@ -48,6 +51,7 @@ final class PipelineCoordinator {
         recorder: AudioRecording,
         transcription: TranscriptionService,
         paste: PasteService,
+        presets: PresetResolving,
         cleanup: TranscriptCleaning? = nil,
         recordingsDir: URL? = nil,
         onFallback: (@MainActor (SayMooreError) -> Void)? = nil
@@ -57,6 +61,7 @@ final class PipelineCoordinator {
         self.transcription = transcription
         self.cleanup = cleanup
         self.paste = paste
+        self.presets = presets
         self.recordingsDir = recordingsDir
         self.onFallback = onFallback
     }
@@ -126,7 +131,11 @@ final class PipelineCoordinator {
 
         let transcript: Transcript
         do {
-            transcript = try await transcription.transcribe(samples: samples, sampleRate: 16_000)
+            transcript = try await transcription.transcribe(
+                samples: samples,
+                sampleRate: 16_000,
+                vocabulary: presets.vocabulary()
+            )
         } catch {
             Log.transcribe.error("transcription failed: \(String(describing: error), privacy: .public)")
             transitionToError(error)

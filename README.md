@@ -28,6 +28,28 @@ The same dictation gets cleaned differently depending on which app is frontmost.
 
 Bundled overrides ship for Slack, Notes, Messages, and BBEdit. Edit `~/Library/Application Support/SayMoore/presets.json` to add your own — changes hot-reload without restart. A "Reload Presets" menu item also triggers a manual reload.
 
+### Custom vocabulary (v1.1)
+
+Acoustic misses on project-specific identifiers (`FSEventStream` → "FS event stream", `Qwen` → "Clem") can be fixed by adding a top-level `vocabulary` array to `presets.json`:
+
+```json
+{
+  "default": "…",
+  "overrides": { … },
+  "vocabulary": ["FSEventStream", "AVAudioEngine", "Qwen", "Ollama", "SayMoore"]
+}
+```
+
+The list is wrapped into a sentence and passed to Whisper as `initial_prompt`, biasing decoding toward those terms. Edits hot-reload like the rest of `presets.json`.
+
+**Limits** (defense-in-depth, similar to other `presets.json` bounds):
+
+- Up to 50 entries
+- Up to 64 chars per entry
+- Up to 512 bytes total (wrapped)
+
+On a violation, vocabulary biasing is disabled for that load and a notification posts; the rest of `presets.json` (default + per-app overrides) keeps working. Repeat saves of the same bad file stay quiet (dedupe). See [`docs/manual-tests/vocab-biasing.md`](docs/manual-tests/vocab-biasing.md) for the test protocol.
+
 ## Status / what's shipped
 
 This repo is being built one vertical slice at a time. Track progress in the [GitHub Project board](https://github.com/seemoretmoore/saymoore/projects).

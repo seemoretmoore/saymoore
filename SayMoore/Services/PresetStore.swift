@@ -13,10 +13,23 @@ enum PresetStoreError: Error, Equatable {
     case tooManyOverrides(count: Int)
     case templateTooLong(bytes: Int)
     case notRegularFile
+    // Vocabulary errors — non-fatal (partial-failure semantics).
+    case tooManyVocabEntries(count: Int)
+    case vocabEntryTooLong(bytes: Int)
+    case vocabularyTooLarge(bytes: Int)
+    case vocabularyMalformed
 }
 
 protocol PresetResolving: Sendable {
     func preset(for bundleID: String?) -> Preset
+    func vocabulary() -> [String]
+}
+
+/// Outcome from `reload()`. `vocabularyWarning` is non-nil only on *transitions*
+/// — first appearance of a warning, or a change to a different warning. Same-
+/// discriminant repeats and recoveries are silenced so menu/FS reloads don't spam.
+struct ReloadOutcome {
+    let vocabularyWarning: PresetStoreError?
 }
 
 final class PresetStore: PresetResolving, @unchecked Sendable {
@@ -51,6 +64,16 @@ final class PresetStore: PresetResolving, @unchecked Sendable {
     private let lock = NSLock()
     private var currentDefault: Preset
     private var currentOverrides: [String: Preset] = [:]
+    private var currentVocabulary: [String] = []
+
+    /// One-shot snapshot of any vocabulary warning surfaced during `init`.
+    /// Read once by `AppDelegate.applicationDidFinishLaunching` to post a
+    /// launch-time banner. NOT current state — never reread post-launch.
+    let initialVocabularyWarning: PresetStoreError?
+
+    /// Dedupe state for reload-warning banners (guarded by `lock`).
+    /// Same-discriminant repeats return `vocabularyWarning: nil` from `reload()`.
+    private var lastSurfacedVocabWarning: PresetStoreError?
 
     /// Production initializer. Ensures the preset directory exists, materializes
     /// `presets.json` from the bundled example (or hardcoded baseline as fallback)
@@ -65,6 +88,7 @@ final class PresetStore: PresetResolving, @unchecked Sendable {
     init(fileURL: URL, materializeIfMissing: Bool) {
         self.fileURL = fileURL
         self.currentDefault = Preset(name: "default", promptTemplate: Self.defaultPromptTemplate)
+        var initWarning: PresetStoreError? = nil
 
         if materializeIfMissing {
             try? Self.ensureDirectory(for: fileURL)
@@ -76,7 +100,12 @@ final class PresetStore: PresetResolving, @unchecked Sendable {
         if let loaded = try? Self.loadFromDisk(at: fileURL) {
             self.currentDefault = loaded.defaultPreset
             self.currentOverrides = loaded.overrides
+            self.currentVocabulary = loaded.vocabulary
+            initWarning = loaded.vocabularyWarning
         }
+        self.initialVocabularyWarning = initWarning
+        // Prime dedupe so the next reload of the same broken file stays quiet.
+        self.lastSurfacedVocabWarning = initWarning
     }
 
     func defaultPreset() -> Preset {
@@ -94,6 +123,13 @@ final class PresetStore: PresetResolving, @unchecked Sendable {
         return currentDefault
     }
 
+    /// Current vocabulary list. Empty when no `vocabulary` key is present, the
+    /// list is empty, or the last load had a vocabulary bounds violation.
+    func vocabulary() -> [String] {
+        lock.lock(); defer { lock.unlock() }
+        return currentVocabulary
+    }
+
     /// Re-materialize `presets.json` if missing. Idempotent — no-op when the
     /// file already exists. Used by the "Edit Presets…" menu item to recover
     /// gracefully when the user (or a sync tool) deletes the file post-launch.
@@ -105,13 +141,40 @@ final class PresetStore: PresetResolving, @unchecked Sendable {
     }
 
     /// Re-read `presets.json` and atomically replace the in-memory default +
-    /// overrides. On error the previous in-memory state is retained and the
-    /// error is rethrown so the caller can surface a notification.
-    func reload() throws {
+    /// overrides + vocabulary. On hard error (decoder, bounds on the *structural*
+    /// payload) the previous in-memory state is retained and the error is
+    /// rethrown. Vocabulary errors are partial-failure: the rest of the file
+    /// loads normally, vocabulary clears, and `ReloadOutcome.vocabularyWarning`
+    /// is non-nil **only on transitions** (new warning, or a change to a
+    /// different warning) — repeat saves of the same broken file return `nil`
+    /// to avoid banner spam.
+    @discardableResult
+    func reload() throws -> ReloadOutcome {
         let loaded = try Self.loadFromDisk(at: fileURL)
         lock.lock(); defer { lock.unlock() }
         currentDefault = loaded.defaultPreset
         currentOverrides = loaded.overrides
+        currentVocabulary = loaded.vocabulary
+
+        let toSurface: PresetStoreError?
+        if let w = loaded.vocabularyWarning, w != lastSurfacedVocabWarning {
+            toSurface = w
+        } else {
+            toSurface = nil
+        }
+        lastSurfacedVocabWarning = loaded.vocabularyWarning
+        return ReloadOutcome(vocabularyWarning: toSurface)
+    }
+
+    // MARK: - Vocabulary formatter
+
+    /// Sentence-form wrapper. Returns `nil` for an empty list so callers can
+    /// pass `NULL` to whisper.cpp's `initial_prompt`. Used both by `loadFromDisk`
+    /// (to enforce the byte cap) and by `WhisperTranscriptionService` (to set
+    /// the prompt at transcribe time) — single source of truth, no drift.
+    static func vocabularyPromptString(_ vocab: [String]) -> String? {
+        guard !vocab.isEmpty else { return nil }
+        return "The following transcript may include these terms: \(vocab.joined(separator: ", "))."
     }
 
     // MARK: - Disk
@@ -119,6 +182,8 @@ final class PresetStore: PresetResolving, @unchecked Sendable {
     private struct LoadedPresets {
         let defaultPreset: Preset
         let overrides: [String: Preset]
+        let vocabulary: [String]
+        let vocabularyWarning: PresetStoreError?
     }
 
     private static func ensureDirectory(for fileURL: URL) throws {
@@ -134,9 +199,9 @@ final class PresetStore: PresetResolving, @unchecked Sendable {
     }
 
     /// Seed `presets.json` on first launch. Prefers the bundled
-    /// `presets.example.json` (ships with 5 per-app overrides); falls back to a
-    /// hardcoded default-only payload when the bundle resource is unavailable
-    /// (tests, command-line contexts).
+    /// `presets.example.json` (ships with 5 per-app overrides + sample vocabulary);
+    /// falls back to a hardcoded default-only payload when the bundle resource is
+    /// unavailable (tests, command-line contexts).
     private static func materializeBaseline(at url: URL) throws {
         if let bundled = Bundle.main.url(forResource: "presets.example", withExtension: "json"),
            let data = try? Data(contentsOf: bundled) {
@@ -159,6 +224,14 @@ final class PresetStore: PresetResolving, @unchecked Sendable {
     static let maxFileBytes = 512 * 1024
     static let maxOverridesCount = 100
     static let maxTemplateBytes = 16 * 1024
+
+    // Vocabulary bounds (mirror A2). 512 B wrapped sentence ≈ ~128 tokens at the
+    // chars/4 rule of thumb, well under whisper.cpp's ~224-token initial_prompt
+    // budget. Theoretical — `WhisperPromptBudgetTests` enforces the actual ≤200-token
+    // assertion via `whisper_tokenize`.
+    static let maxVocabularyEntries = 50
+    static let maxVocabularyEntryBytes = 64
+    static let maxVocabularyTotalBytes = 512
 
     private static func loadFromDisk(at url: URL) throws -> LoadedPresets {
         // Reject directories / FIFOs / device nodes before opening — Data(contentsOf:)
@@ -228,9 +301,51 @@ final class PresetStore: PresetResolving, @unchecked Sendable {
             }
         }
 
+        // Vocabulary — partial-failure. Permissive `Any` decode so a wrong-type
+        // value (string-not-array, number, etc.) becomes a vocab-only warning
+        // instead of failing the whole structural load.
+        let (vocabulary, vocabularyWarning): ([String], PresetStoreError?)
+        if let rawVocab = dict["vocabulary"] {
+            (vocabulary, vocabularyWarning) = parseVocabulary(rawVocab)
+        } else {
+            (vocabulary, vocabularyWarning) = ([], nil)
+        }
+
         return LoadedPresets(
             defaultPreset: Preset(name: "default", promptTemplate: defaultTemplate),
-            overrides: overrides
+            overrides: overrides,
+            vocabulary: vocabulary,
+            vocabularyWarning: vocabularyWarning
         )
+    }
+
+    /// First-violation-wins. Permissive: empty-after-trim entries drop silently
+    /// before the count check (tolerates trailing commas / accidental empties
+    /// from hand-editing JSON).
+    private static func parseVocabulary(_ raw: Any) -> (vocabulary: [String], warning: PresetStoreError?) {
+        // Explicit JSON null tolerated as "no vocabulary."
+        if raw is NSNull { return ([], nil) }
+        guard let arr = raw as? [Any] else {
+            return ([], .vocabularyMalformed)
+        }
+        var trimmed: [String] = []
+        for v in arr {
+            guard let s = v as? String else {
+                return ([], .vocabularyMalformed)
+            }
+            let t = s.trimmingCharacters(in: .whitespacesAndNewlines)
+            if t.isEmpty { continue }
+            trimmed.append(t)
+        }
+        if trimmed.count > maxVocabularyEntries {
+            return ([], .tooManyVocabEntries(count: trimmed.count))
+        }
+        if let bad = trimmed.first(where: { $0.utf8.count > maxVocabularyEntryBytes }) {
+            return ([], .vocabEntryTooLong(bytes: bad.utf8.count))
+        }
+        if let wrapped = vocabularyPromptString(trimmed), wrapped.utf8.count > maxVocabularyTotalBytes {
+            return ([], .vocabularyTooLarge(bytes: wrapped.utf8.count))
+        }
+        return (trimmed, nil)
     }
 }

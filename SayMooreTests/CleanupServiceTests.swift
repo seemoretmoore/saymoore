@@ -7,6 +7,7 @@ final class CleanupServiceTests: XCTestCase {
         func preset(for bundleID: String?) -> Preset {
             Preset(name: "stub", promptTemplate: "{{transcript}}")
         }
+        func vocabulary() -> [String] { [] }
     }
 
     private final class FakeOllama: OllamaClient, @unchecked Sendable {
