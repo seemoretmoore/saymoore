@@ -474,6 +474,16 @@ final class PresetStoreTests: XCTestCase {
         XCTAssertEqual(store.initialVocabularyWarning, .vocabularyMalformed)
     }
 
+    func testNullEntriesInVocabularyArrayDropSilently() throws {
+        // null entries are tolerated like empty-after-trim entries — consistent
+        // with the permissive hand-editing model (accidental commas / nulls).
+        let url = fileURL()
+        try write(#"{"default":"DEF","vocabulary":["FSEventStream",null,"Qwen",null]}"#, to: url)
+        let store = PresetStore(fileURL: url, materializeIfMissing: false)
+        XCTAssertEqual(store.vocabulary(), ["FSEventStream", "Qwen"])
+        XCTAssertNil(store.initialVocabularyWarning)
+    }
+
     // MARK: - Reload dedupe + transition
 
     func testReloadDedupesSameWarningOnRepeatLoads() throws {

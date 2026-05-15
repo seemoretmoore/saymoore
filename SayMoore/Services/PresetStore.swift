@@ -330,6 +330,9 @@ final class PresetStore: PresetResolving, @unchecked Sendable {
         }
         var trimmed: [String] = []
         for v in arr {
+            // Tolerate explicit JSON null inside the array like empty-after-trim
+            // entries — consistent with the permissive hand-editing model.
+            if v is NSNull { continue }
             guard let s = v as? String else {
                 return ([], .vocabularyMalformed)
             }

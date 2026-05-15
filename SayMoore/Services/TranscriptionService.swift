@@ -99,6 +99,8 @@ final class WhisperTranscriptionService: TranscriptionService, @unchecked Sendab
             promptCStr = prompt.withCString { strdup($0) }
             if let p = promptCStr {
                 fparams.initial_prompt = UnsafePointer(p)
+            } else {
+                Log.transcribe.warning("strdup returned nil for vocab prompt — biasing dropped silently for this call")
             }
         }
 
@@ -152,6 +154,9 @@ final class WhisperTranscriptionService: TranscriptionService {
         Log.transcribe.error("whisper.xcframework not linked — run scripts/setup-whisper.sh and re-add to project.yml")
         throw SayMooreError.modelMissing
     }
+    /// `#else` stub so `WhisperPromptBudgetTests` compiles when whisper isn't linked.
+    /// Returns `nil` → the test calls `XCTSkip`, same path as model-missing.
+    static func tokenCount(modelPath: String, prompt: String) -> Int? { nil }
 }
 #endif
 
