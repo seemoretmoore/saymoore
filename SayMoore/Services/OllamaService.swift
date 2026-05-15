@@ -30,19 +30,21 @@ final class OllamaService: OllamaClient, @unchecked Sendable {
     }
 
     func generate(model: String, prompt: String, timeout: TimeInterval) async throws -> String {
-        var req = URLRequest(url: baseURL.appendingPathComponent("api/generate"))
-        req.httpMethod = "POST"
-        req.timeoutInterval = timeout
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.httpBody = try JSONEncoder().encode(
+        var mutableReq = URLRequest(url: baseURL.appendingPathComponent("api/generate"))
+        mutableReq.httpMethod = "POST"
+        mutableReq.timeoutInterval = timeout
+        mutableReq.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        mutableReq.httpBody = try JSONEncoder().encode(
             OllamaGenerateRequest(model: model, prompt: prompt, stream: false)
         )
+        let req = mutableReq
 
         let data: Data
         let response: URLResponse
         do {
+            let session = self.session
             (data, response) = try await withThrowingTaskGroup(of: (Data, URLResponse).self) { group in
-                group.addTask { try await self.session.data(for: req) }
+                group.addTask { try await session.data(for: req) }
                 group.addTask {
                     try await Task.sleep(for: .seconds(timeout))
                     throw SayMooreError.cleanupTimedOut
@@ -87,8 +89,9 @@ final class OllamaService: OllamaClient, @unchecked Sendable {
         let data: Data
         let response: URLResponse
         do {
+            let session = self.session
             (data, response) = try await withThrowingTaskGroup(of: (Data, URLResponse).self) { group in
-                group.addTask { try await self.session.data(for: req) }
+                group.addTask { try await session.data(for: req) }
                 group.addTask {
                     try await Task.sleep(for: .seconds(3))
                     throw SayMooreError.ollamaUnreachable

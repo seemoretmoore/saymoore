@@ -29,11 +29,12 @@ final class CleanupService: TranscriptCleaning, @unchecked Sendable {
         let preset = presets.preset(for: bundleID)
         let prompt = Self.buildPrompt(template: preset.promptTemplate, transcript: raw)
         Log.cleanup.debug("cleanup → preset=\(preset.name, privacy: .public) chars=\(raw.count, privacy: .public)")
-        let raw = try await client.generate(model: model, prompt: prompt, timeout: timeout)
-        return raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        let response = try await client.generate(model: model, prompt: prompt, timeout: timeout)
+        return response.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     static func buildPrompt(template: String, transcript: String) -> String {
-        template.replacingOccurrences(of: "{{transcript}}", with: transcript)
+        let fenced = "<transcript>\n\(transcript)\n</transcript>"
+        return template.replacingOccurrences(of: "{{transcript}}", with: fenced)
     }
 }

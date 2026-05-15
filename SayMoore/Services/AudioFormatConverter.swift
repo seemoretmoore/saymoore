@@ -1,4 +1,4 @@
-import AVFoundation
+@preconcurrency import AVFoundation
 
 final class AudioFormatConverter {
     let inputFormat: AVAudioFormat
@@ -31,17 +31,20 @@ final class AudioFormatConverter {
             throw SayMooreError.audioEngineFailed(underlying: ConverterError.bufferAllocFailed)
         }
 
-        var consumed = false
+        // Use a reference-type flag so the @Sendable inputBlock closure can
+        // mutate it without triggering strict-concurrency errors.
+        final class Flag: @unchecked Sendable { var consumed = false }
+        let flag = Flag()
         var convError: NSError?
         let status = converter.convert(to: out, error: &convError) { _, outStatus in
-            if consumed {
+            if flag.consumed {
                 // .noDataNow (not .endOfStream): this converter is reused across many
                 // tap buffers. Signaling end-of-stream finalizes the resampler and all
                 // subsequent buffers produce 0 frames.
                 outStatus.pointee = .noDataNow
                 return nil
             }
-            consumed = true
+            flag.consumed = true
             outStatus.pointee = .haveData
             return input
         }
