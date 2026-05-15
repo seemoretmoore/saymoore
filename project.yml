@@ -18,7 +18,7 @@ settings:
     ENABLE_DEBUG_DYLIB: NO
     MARKETING_VERSION: "0.1.0"
     CURRENT_PROJECT_VERSION: "1"
-    SWIFT_TREAT_WARNINGS_AS_ERRORS: NO
+    SWIFT_TREAT_WARNINGS_AS_ERRORS: YES
     GCC_TREAT_WARNINGS_AS_ERRORS: NO
   configs:
     Debug:
@@ -58,6 +58,8 @@ targets:
     postBuildScripts:
       - name: Assert non-adhoc signing
         basedOnDependencyAnalysis: false
+        inputFiles:
+          - "$(CODE_SIGN_IDENTITY)"
         script: |
           set -e
           APP="${BUILT_PRODUCTS_DIR}/${WRAPPER_NAME}"
@@ -97,6 +99,8 @@ targets:
     platform: macOS
     sources:
       - path: SayMooreTests
+    resources:
+      - path: SayMoore/Resources/presets.example.json
     dependencies:
       - target: SayMoore
     settings:

@@ -21,7 +21,8 @@ final class PresetStoreTests: XCTestCase {
     }
 
     private func write(_ json: String, to url: URL) throws {
-        try json.data(using: .utf8)!.write(to: url, options: .atomic)
+        let data = try XCTUnwrap(json.data(using: .utf8))
+        try data.write(to: url, options: .atomic)
     }
 
     // MARK: - Materialization
@@ -316,5 +317,29 @@ final class PresetStoreTests: XCTestCase {
             if case .notRegularFile = e {} else { XCTFail("wrong error: \(e)") }
         }
         XCTAssertEqual(store.defaultPreset().promptTemplate, "v")
+    }
+
+    // MARK: - Drift: presets.example.json default must match PresetStore.defaultPromptTemplate
+
+    func testPresetsExampleJsonDefaultMatchesHardcodedTemplate() throws {
+        // Resource ships in the production app bundle; load from there rather than the test bundle.
+        let resourceURL = try XCTUnwrap(
+            Bundle(for: PresetStore.self).url(forResource: "presets.example", withExtension: "json"),
+            "presets.example.json not found in SayMoore app bundle"
+        )
+        let data = try Data(contentsOf: resourceURL)
+        let obj = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: data) as? [String: Any],
+            "presets.example.json is not a JSON object"
+        )
+        let bundledDefault = try XCTUnwrap(
+            obj["default"] as? String,
+            "presets.example.json missing 'default' key"
+        )
+        XCTAssertEqual(
+            bundledDefault,
+            PresetStore.defaultPromptTemplate,
+            "presets.example.json 'default' has drifted from PresetStore.defaultPromptTemplate — update both together"
+        )
     }
 }

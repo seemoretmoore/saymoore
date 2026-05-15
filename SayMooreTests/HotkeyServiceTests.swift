@@ -27,7 +27,7 @@ final class HotkeyServiceTests: XCTestCase {
         var toggleFired = false
         svc.onToggle = { _ in toggleFired = true }
 
-        let now = ProcessInfo.processInfo.systemUptime
+        _ = ProcessInfo.processInfo.systemUptime
         // Simulate: one ctrlDown arrives right after reset — should NOT toggle.
         if let e = CGEvent(source: src) {
             e.type = .flagsChanged

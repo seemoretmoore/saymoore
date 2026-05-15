@@ -347,14 +347,16 @@ final class ModelDownloaderTests: XCTestCase {
             session: makeSession()
         )
 
-        var fractions: [Double] = []
-        let lock = NSLock()
-        try await dl.download { f in
-            lock.lock(); fractions.append(f); lock.unlock()
+        final class FractionsBox: @unchecked Sendable {
+            var values: [Double] = []
+            let lock = NSLock()
+            func append(_ f: Double) { lock.lock(); values.append(f); lock.unlock() }
         }
-        XCTAssertFalse(fractions.isEmpty)
-        XCTAssertTrue(fractions.allSatisfy { $0 >= 0.0 && $0 <= 1.0 })
-        XCTAssertEqual(fractions.last ?? -1, 1.0, accuracy: 0.0001)
+        let box = FractionsBox()
+        try await dl.download { f in box.append(f) }
+        XCTAssertFalse(box.values.isEmpty)
+        XCTAssertTrue(box.values.allSatisfy { $0 >= 0.0 && $0 <= 1.0 })
+        XCTAssertEqual(box.values.last ?? -1, 1.0, accuracy: 0.0001)
     }
 }
 
@@ -376,7 +378,7 @@ private func XCTAssertThrowsErrorAsync<T>(
 
 final class MockURLProtocol: URLProtocol, @unchecked Sendable {
     nonisolated(unsafe) static var handler: (@Sendable (URLRequest) -> (HTTPURLResponse, Data))?
-    nonisolated(unsafe) static let lock = NSLock()
+    static let lock = NSLock()
 
     static func reset() {
         lock.lock(); defer { lock.unlock() }

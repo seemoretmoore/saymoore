@@ -26,7 +26,7 @@ final class CleanupServiceTests: XCTestCase {
 
     func testBuildPromptSubstitutesTranscriptToken() {
         let out = CleanupService.buildPrompt(template: "x{{transcript}}y", transcript: "HI")
-        XCTAssertEqual(out, "xHIy")
+        XCTAssertEqual(out, "x<transcript>\nHI\n</transcript>y")
     }
 
     func testCleanHappyPathPassesPromptAndModel() async throws {
