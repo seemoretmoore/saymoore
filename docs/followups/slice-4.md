@@ -2,6 +2,12 @@
 
 Distilled from a four-agent adversarial review (UX / security / maintainability / codebase quality) of `a30e94e` on 2026-05-14, validated against actual code by the main reviewing thread. Nothing here was push-blocking; everything is queued work.
 
+## Status — Bundle A ✅, Bundle B (narrow) ✅, Bundle C ✅ — shipped 2026-05-14
+
+**Bundle B narrow (M2 + M6 + Q1)** and **Bundle C (seven nits)** shipped 2026-05-14 with adversarial-review remediation passes. Bundle B initial commit (`d4a075d` pre-rebase) had 2 Critical + 6 Major findings; remediated in a follow-up commit before merge. Bundle C initial commit (`69a4718` pre-rebase) had 1 Major (C3 prompt-injection fence was escapable by `</transcript>` in user content); remediated with ZWJ sanitization + propagated defensive sentence to all 4 override presets. Two B residuals deferred (see "Bundle B+C remediation residuals" below).
+
+**Remaining:** Bundle B slice-coupled items (M1 → Slice 11, M5/M8 → Slice 6, M7 → Slice 9). A7 minor (banner squelch when unchanged) — deferred.
+
 ## Status — Bundle A ✅ shipped 2026-05-14
 
 All six Bundle A items landed (commit hashes filled in after push). Each was adversarially re-reviewed during planning (security + senior-Swift lens) and the recommendations baked into implementation. Notable deviations from the original tickets:
@@ -83,6 +89,15 @@ Remaining: Bundle B (deferred to natural slice homes), Bundle C (chore-pass nits
   - `PresetStoreTests.swift:24` uses `try!` on `String.data(using: .utf8)` — replace with `XCTUnwrap` for clearer test failures.
   - `PresetWatcher.swift` — `(path as NSString).lastPathComponent` on a path with a trailing slash can return empty. Normalize via `URL(fileURLWithPath: path).lastPathComponent`.
   - `project.yml:21` — `SWIFT_TREAT_WARNINGS_AS_ERRORS: NO`. Consider flipping for the production target.
+
+## Bundle B+C remediation residuals (file 2026-05-14)
+
+Carried forward from the post-remediation adversarial re-review of `dbd7708` (B) and `f14b857` (C). Both branches landed all Critical/Major findings except these two minor leftovers:
+
+- **B Swift M2 partial — `proc_pidpath` still sync on actor.** `OllamaTrustProbe`'s `binaryPathResolver` closure invokes `proc_pidpath` directly on the actor executor (~10 ms per PID under load). Doc comment at `OllamaTrustProbe.swift:159–161` misleadingly claims `Task.detached` coverage that only applies to `lsofRunner`. Fix: wrap the production `binaryPathResolver` body in `Task.detached { ... }.value` and correct the comment. Severity: Minor (acceptable latency in practice, but actor-blocking is a strict-concurrency smell).
+- **B Sec C2 known limitation — symlink-into-allowed-root not blocked.** `isAcceptableBinary` standardizes the path via `URL(fileURLWithPath:).standardized.path` (resolves `..`, not symlinks). A symlink at `/Applications/Ollama.app/Contents/MacOS/ollama` pointing into `/tmp/evil` would still pass `hasPrefix`. Fix: chain `.resolvingSymlinksInPath` before the `hasPrefix` check. Severity: Minor (requires write access to `/Applications`, which already implies a compromised system).
+
+Both can land as a single small chore commit when the area is next touched.
 
 ## Dropped (invalidated by code inspection)
 

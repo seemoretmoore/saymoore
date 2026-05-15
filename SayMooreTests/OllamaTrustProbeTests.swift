@@ -1,6 +1,14 @@
 import XCTest
 @testable import SayMoore
 
+/// Reference-type flag so @Sendable closures can record without capturing a `var`.
+private final class CalledFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var fired = false
+    func fire() { lock.lock(); fired = true; lock.unlock() }
+    var value: Bool { lock.lock(); defer { lock.unlock() }; return fired }
+}
+
 final class OllamaTrustProbeTests: XCTestCase {
 
     // MARK: - Helpers
@@ -105,11 +113,11 @@ final class OllamaTrustProbeTests: XCTestCase {
     /// M4: network failure short-circuits to .untrustedEndpoint without running lsof.
     func testNetworkFailureShortCircuitsToUntrustedWithoutCallingLsof() async throws {
         let session = makeSession(error: URLError(.timedOut))
-        var lsofCalled = false
+        let called = CalledFlag()
         let probe = OllamaTrustProbe(
             session: session,
             lsofRunner: {
-                lsofCalled = true
+                called.fire()
                 return "p42\nn127.0.0.1:11434"
             },
             binaryPathResolver: { _ in "/Applications/Ollama.app/Contents/MacOS/ollama" }
@@ -118,17 +126,17 @@ final class OllamaTrustProbeTests: XCTestCase {
         guard case .untrustedEndpoint = result else {
             return XCTFail("expected .untrustedEndpoint on network error, got \(result)")
         }
-        XCTAssertFalse(lsofCalled, "lsof must not be called when HTTP check fails")
+        XCTAssertFalse(called.value, "lsof must not be called when HTTP check fails")
     }
 
     /// M4: connection refused (cannotConnectToHost) → untrusted, no lsof.
     func testConnectionRefusedShortCircuitsToUntrusted() async throws {
         let session = makeSession(error: URLError(.cannotConnectToHost))
-        var lsofCalled = false
+        let called = CalledFlag()
         let probe = OllamaTrustProbe(
             session: session,
             lsofRunner: {
-                lsofCalled = true
+                called.fire()
                 return nil
             },
             binaryPathResolver: { _ in nil }
@@ -137,7 +145,7 @@ final class OllamaTrustProbeTests: XCTestCase {
         guard case .untrustedEndpoint = result else {
             return XCTFail("expected .untrustedEndpoint on connection refused, got \(result)")
         }
-        XCTAssertFalse(lsofCalled, "lsof must not be called when HTTP check fails")
+        XCTAssertFalse(called.value, "lsof must not be called when HTTP check fails")
     }
 
     // MARK: - Unknown binary → untrusted
