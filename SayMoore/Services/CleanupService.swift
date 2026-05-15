@@ -27,21 +27,17 @@ final class CleanupService: TranscriptCleaning, @unchecked Sendable {
 
     func clean(_ raw: String, bundleID: String?) async throws -> String {
         let preset = presets.preset(for: bundleID)
-        let vocab = presets.vocabulary()
-        let prompt = Self.buildPrompt(template: preset.promptTemplate, transcript: raw, vocabulary: vocab)
-        Log.cleanup.debug("cleanup → preset=\(preset.name, privacy: .public) chars=\(raw.count, privacy: .public) vocabCount=\(vocab.count, privacy: .public)")
+        let prompt = Self.buildPrompt(template: preset.promptTemplate, transcript: raw)
+        Log.cleanup.debug("cleanup → preset=\(preset.name, privacy: .public) chars=\(raw.count, privacy: .public)")
         let response = try await client.generate(model: model, prompt: prompt, timeout: timeout)
         return response.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    static func buildPrompt(template: String, transcript: String, vocabulary: [String]) -> String {
+    static func buildPrompt(template: String, transcript: String) -> String {
         let safe = transcript
             .replacingOccurrences(of: "</transcript>", with: "</\u{200B}transcript>")
             .replacingOccurrences(of: "<transcript>", with: "<\u{200B}transcript>")
-        var fenced = "<transcript>\n\(safe)\n</transcript>"
-        if let glossary = PresetStore.cleanupGlossaryLine(vocabulary) {
-            fenced = "\(glossary)\n\n\(fenced)"
-        }
+        let fenced = "<transcript>\n\(safe)\n</transcript>"
         return template.replacingOccurrences(of: "{{transcript}}", with: fenced)
     }
 }

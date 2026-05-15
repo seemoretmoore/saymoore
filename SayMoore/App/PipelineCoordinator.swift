@@ -184,6 +184,14 @@ final class PipelineCoordinator {
     }
 
     private func maybeCleanup(raw: String) async -> String {
+        let cleaned = await runCleanup(raw: raw)
+        // Deterministic phonetic→canonical substitution. Applies on every path
+        // (LLM-cleaned, fast-path, fallback-to-raw) so vocabulary takes effect
+        // even when the cleanup LLM times out or is unreachable.
+        return PresetStore.applyVocabSubstitutions(to: cleaned, vocab: presets.vocabulary())
+    }
+
+    private func runCleanup(raw: String) async -> String {
         guard let cleanup else { return raw }
 
         let separators = CharacterSet.punctuationCharacters.union(.whitespacesAndNewlines)

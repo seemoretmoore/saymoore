@@ -20,9 +20,18 @@ enum PresetStoreError: Error, Equatable {
     case vocabularyMalformed
 }
 
+/// A single vocabulary entry: a phonetic rendering (what whisper produces when
+/// the user dictates the term) mapped to the canonical written form (what we
+/// want in the final output). Substitution is case-insensitive on `phonetic`
+/// and word-boundary anchored.
+struct VocabEntry: Equatable, Sendable {
+    let phonetic: String
+    let canonical: String
+}
+
 protocol PresetResolving: Sendable {
     func preset(for bundleID: String?) -> Preset
-    func vocabulary() -> [String]
+    func vocabulary() -> [VocabEntry]
 }
 
 /// Outcome from `reload()`. `vocabularyWarning` is non-nil only on *transitions*
@@ -64,7 +73,7 @@ final class PresetStore: PresetResolving, @unchecked Sendable {
     private let lock = NSLock()
     private var currentDefault: Preset
     private var currentOverrides: [String: Preset] = [:]
-    private var currentVocabulary: [String] = []
+    private var currentVocabulary: [VocabEntry] = []
 
     /// One-shot snapshot of any vocabulary warning surfaced during `init`.
     /// Read once by `AppDelegate.applicationDidFinishLaunching` to post a
@@ -125,7 +134,7 @@ final class PresetStore: PresetResolving, @unchecked Sendable {
 
     /// Current vocabulary list. Empty when no `vocabulary` key is present, the
     /// list is empty, or the last load had a vocabulary bounds violation.
-    func vocabulary() -> [String] {
+    func vocabulary() -> [VocabEntry] {
         lock.lock(); defer { lock.unlock() }
         return currentVocabulary
     }
@@ -168,24 +177,34 @@ final class PresetStore: PresetResolving, @unchecked Sendable {
 
     // MARK: - Vocabulary helpers
 
-    /// Glossary line injected above the `<transcript>` fence by `CleanupService`.
-    /// Returns `nil` for an empty list so the caller can skip injection entirely.
-    /// Format chosen so the cleanup LLM treats the line as semantic context, not
-    /// part of the transcript.
-    static func cleanupGlossaryLine(_ vocab: [String]) -> String? {
-        guard !vocab.isEmpty else { return nil }
-        return "Known technical terms (preserve exact spelling, including camelCase): \(vocab.joined(separator: ", "))."
+    /// Apply each entry's `phonetic` → `canonical` substitution to `text`.
+    /// Case-insensitive on the phonetic match; word-boundary anchored so
+    /// "FS event stream" matches inside "the FS event stream callback" but
+    /// not inside "fsesyentstream". Longest-phonetic-first ordering so a
+    /// shorter prefix doesn't consume a longer match. Deterministic; safe
+    /// to apply on every cleanup path (LLM-cleaned, fast-path, fallback-raw).
+    static func applyVocabSubstitutions(to text: String, vocab: [VocabEntry]) -> String {
+        guard !vocab.isEmpty, !text.isEmpty else { return text }
+        let sorted = vocab.sorted { $0.phonetic.utf8.count > $1.phonetic.utf8.count }
+        var result = text
+        for entry in sorted {
+            let escapedPattern = NSRegularExpression.escapedPattern(for: entry.phonetic)
+            let pattern = "\\b\(escapedPattern)\\b"
+            guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
+                continue
+            }
+            let template = NSRegularExpression.escapedTemplate(for: entry.canonical)
+            let range = NSRange(result.startIndex..., in: result)
+            result = regex.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: template)
+        }
+        return result
     }
 
-    /// Byte count used to enforce the user-facing 512 B cap. Counts raw terms
-    /// joined by `", "` only — the cleanup-glossary wrapper prefix is internal
-    /// overhead and not billed against the user's budget. This keeps the
-    /// "max 512 B" promise stable regardless of future wrapper edits.
-    static func vocabularyBilledBytes(_ vocab: [String]) -> Int {
-        guard !vocab.isEmpty else { return 0 }
-        let termBytes = vocab.reduce(0) { $0 + $1.utf8.count }
-        let separatorBytes = max(0, vocab.count - 1) * 2 // ", "
-        return termBytes + separatorBytes
+    /// Byte count used to enforce the user-facing 512 B cap. Sums every entry's
+    /// phonetic + canonical UTF-8 bytes. JSON overhead (braces, quotes, keys)
+    /// is not billed.
+    static func vocabularyBilledBytes(_ vocab: [VocabEntry]) -> Int {
+        vocab.reduce(0) { $0 + $1.phonetic.utf8.count + $1.canonical.utf8.count }
     }
 
     // MARK: - Disk
@@ -193,7 +212,7 @@ final class PresetStore: PresetResolving, @unchecked Sendable {
     private struct LoadedPresets {
         let defaultPreset: Preset
         let overrides: [String: Preset]
-        let vocabulary: [String]
+        let vocabulary: [VocabEntry]
         let vocabularyWarning: PresetStoreError?
     }
 
@@ -236,11 +255,11 @@ final class PresetStore: PresetResolving, @unchecked Sendable {
     static let maxOverridesCount = 100
     static let maxTemplateBytes = 16 * 1024
 
-    // Vocabulary bounds. The 512 B total cap is now justified by cleanup-LLM
-    // prompt hygiene (a runaway list would dilute the per-app template's
-    // instructions and slow inference) rather than by any hard whisper budget —
-    // vocabulary flows into the cleanup glossary, not whisper's initial_prompt.
-    // Caps remain conservative so a malformed list can't blow up the cleanup pass.
+    // Vocabulary bounds. Caps cover both UX hygiene (50 substitutions per
+    // dictation is already a large workload) and a defense against runaway
+    // regex compilation. `maxVocabularyEntryBytes` applies separately to each
+    // entry's `phonetic` and `canonical`; `maxVocabularyTotalBytes` is the
+    // sum of all phonetic + canonical bytes across all entries.
     static let maxVocabularyEntries = 50
     static let maxVocabularyEntryBytes = 64
     static let maxVocabularyTotalBytes = 512
@@ -316,7 +335,7 @@ final class PresetStore: PresetResolving, @unchecked Sendable {
         // Vocabulary — partial-failure. Permissive `Any` decode so a wrong-type
         // value (string-not-array, number, etc.) becomes a vocab-only warning
         // instead of failing the whole structural load.
-        let (vocabulary, vocabularyWarning): ([String], PresetStoreError?)
+        let (vocabulary, vocabularyWarning): ([VocabEntry], PresetStoreError?)
         if let rawVocab = dict["vocabulary"] {
             (vocabulary, vocabularyWarning) = parseVocabulary(rawVocab)
         } else {
@@ -331,37 +350,47 @@ final class PresetStore: PresetResolving, @unchecked Sendable {
         )
     }
 
-    /// First-violation-wins. Permissive: empty-after-trim entries drop silently
-    /// before the count check (tolerates trailing commas / accidental empties
-    /// from hand-editing JSON).
-    private static func parseVocabulary(_ raw: Any) -> (vocabulary: [String], warning: PresetStoreError?) {
-        // Explicit JSON null tolerated as "no vocabulary."
+    /// First-violation-wins. Schema: array of `{"phonetic": String, "canonical": String}`
+    /// objects. Both keys required, both strings, both non-empty after trim.
+    /// Entries where either field is empty/missing trigger `.vocabularyMalformed`.
+    /// Explicit JSON null at the array level → empty vocabulary (no warning);
+    /// JSON null inside the array drops silently like empty-after-trim entries.
+    private static func parseVocabulary(_ raw: Any) -> (vocabulary: [VocabEntry], warning: PresetStoreError?) {
         if raw is NSNull { return ([], nil) }
         guard let arr = raw as? [Any] else {
             return ([], .vocabularyMalformed)
         }
-        var trimmed: [String] = []
+        var entries: [VocabEntry] = []
         for v in arr {
-            // Tolerate explicit JSON null inside the array like empty-after-trim
-            // entries — consistent with the permissive hand-editing model.
             if v is NSNull { continue }
-            guard let s = v as? String else {
+            guard let dict = v as? [String: Any],
+                  let rawPhonetic = dict["phonetic"] as? String,
+                  let rawCanonical = dict["canonical"] as? String else {
                 return ([], .vocabularyMalformed)
             }
-            let t = s.trimmingCharacters(in: .whitespacesAndNewlines)
-            if t.isEmpty { continue }
-            trimmed.append(t)
+            let phonetic = rawPhonetic.trimmingCharacters(in: .whitespacesAndNewlines)
+            let canonical = rawCanonical.trimmingCharacters(in: .whitespacesAndNewlines)
+            if phonetic.isEmpty && canonical.isEmpty { continue }
+            if phonetic.isEmpty || canonical.isEmpty {
+                return ([], .vocabularyMalformed)
+            }
+            entries.append(VocabEntry(phonetic: phonetic, canonical: canonical))
         }
-        if trimmed.count > maxVocabularyEntries {
-            return ([], .tooManyVocabEntries(count: trimmed.count))
+        if entries.count > maxVocabularyEntries {
+            return ([], .tooManyVocabEntries(count: entries.count))
         }
-        if let bad = trimmed.first(where: { $0.utf8.count > maxVocabularyEntryBytes }) {
-            return ([], .vocabEntryTooLong(bytes: bad.utf8.count))
+        for e in entries {
+            if e.phonetic.utf8.count > maxVocabularyEntryBytes {
+                return ([], .vocabEntryTooLong(bytes: e.phonetic.utf8.count))
+            }
+            if e.canonical.utf8.count > maxVocabularyEntryBytes {
+                return ([], .vocabEntryTooLong(bytes: e.canonical.utf8.count))
+            }
         }
-        let billed = vocabularyBilledBytes(trimmed)
+        let billed = vocabularyBilledBytes(entries)
         if billed > maxVocabularyTotalBytes {
             return ([], .vocabularyTooLarge(bytes: billed))
         }
-        return (trimmed, nil)
+        return (entries, nil)
     }
 }

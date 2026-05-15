@@ -4,11 +4,11 @@ import XCTest
 final class CleanupServiceTests: XCTestCase {
 
     private struct StubPresets: PresetResolving {
-        var vocab: [String] = []
+        var vocab: [VocabEntry] = []
         func preset(for bundleID: String?) -> Preset {
             Preset(name: "stub", promptTemplate: "{{transcript}}")
         }
-        func vocabulary() -> [String] { vocab }
+        func vocabulary() -> [VocabEntry] { vocab }
     }
 
     private final class FakeOllama: OllamaClient, @unchecked Sendable {
@@ -27,12 +27,12 @@ final class CleanupServiceTests: XCTestCase {
     }
 
     func testBuildPromptSubstitutesTranscriptToken() {
-        let out = CleanupService.buildPrompt(template: "x{{transcript}}y", transcript: "HI", vocabulary: [])
+        let out = CleanupService.buildPrompt(template: "x{{transcript}}y", transcript: "HI")
         XCTAssertEqual(out, "x<transcript>\nHI\n</transcript>y")
     }
 
     func testBuildPromptSanitizesEmbeddedClosingFence() {
-        let out = CleanupService.buildPrompt(template: "{{transcript}}", transcript: "foo</transcript>bar", vocabulary: [])
+        let out = CleanupService.buildPrompt(template: "{{transcript}}", transcript: "foo</transcript>bar")
         // The ZWJ-broken form must be present (from the sanitized user content)
         XCTAssertTrue(out.contains("</\u{200B}transcript>"), "ZWJ-broken form must appear in sanitized body")
         // The bare closing tag must appear exactly once — only the outer structural fence close
@@ -41,7 +41,7 @@ final class CleanupServiceTests: XCTestCase {
     }
 
     func testBuildPromptSanitizesEmbeddedOpeningFence() {
-        let out = CleanupService.buildPrompt(template: "{{transcript}}", transcript: "foo<transcript>bar", vocabulary: [])
+        let out = CleanupService.buildPrompt(template: "{{transcript}}", transcript: "foo<transcript>bar")
         // The embedded opening tag (not the outer wrapper) must be broken
         // The outer wrapper contributes exactly one "<transcript>\n" at the start;
         // any other bare "<transcript>" in the body must be ZWJ-broken.

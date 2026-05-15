@@ -30,23 +30,28 @@ Bundled overrides ship for Slack, Notes, Messages, and BBEdit. Edit `~/Library/A
 
 ### Custom vocabulary (v1.1)
 
-Acoustic misses on project-specific identifiers (`FSEventStream` → "FS event stream", `Qwen` → "Clem") can be fixed by adding a top-level `vocabulary` array to `presets.json`:
+Acoustic misses on project-specific identifiers (`FSEventStream` → "FS event stream", `Qwen` → "Clem") can be fixed by adding a top-level `vocabulary` array to `presets.json`. Each entry is a `{phonetic, canonical}` pair — the phonetic form is what whisper transcribes; the canonical form is the rewrite:
 
 ```json
 {
   "default": "…",
   "overrides": { … },
-  "vocabulary": ["FSEventStream", "AVAudioEngine", "Qwen", "Ollama", "SayMoore"]
+  "vocabulary": [
+    {"phonetic": "FS event stream", "canonical": "FSEventStream"},
+    {"phonetic": "AV audio engine", "canonical": "AVAudioEngine"},
+    {"phonetic": "Quinn",           "canonical": "Qwen"},
+    {"phonetic": "Clem",            "canonical": "Qwen"}
+  ]
 }
 ```
 
-The list is injected as a glossary hint into the Ollama cleanup step, correcting those terms in the final output. Edits hot-reload like the rest of `presets.json`.
+A deterministic case-insensitive word-boundary substitution runs after the Ollama cleanup step (and on the fallback path when cleanup is skipped/unavailable), so each `phonetic` form in the final output gets rewritten to the corresponding `canonical`. Multiple phonetics can map to the same canonical. Edits hot-reload like the rest of `presets.json`.
 
 **Limits** (defense-in-depth, similar to other `presets.json` bounds):
 
 - Up to 50 entries
-- Up to 64 chars per entry
-- Up to 512 bytes total (raw terms + separators)
+- Up to 64 chars per `phonetic` or `canonical`
+- Up to 512 bytes total (sum of all phonetic + canonical bytes)
 
 On a violation, vocabulary is disabled for that load and a notification posts; the rest of `presets.json` (default + per-app overrides) keeps working. Repeat saves of the same bad file stay quiet (dedupe). See [`docs/manual-tests/vocab-cleanup-hint.md`](docs/manual-tests/vocab-cleanup-hint.md) for the test protocol.
 

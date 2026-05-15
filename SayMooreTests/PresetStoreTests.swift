@@ -345,13 +345,25 @@ final class PresetStoreTests: XCTestCase {
 
     // MARK: - Vocabulary (v1.1 Custom Dictionary)
 
+    private static let sampleVocabJSON = #"""
+        {"default":"DEF","vocabulary":[
+            {"phonetic":"FS event stream","canonical":"FSEventStream"},
+            {"phonetic":"Quinn","canonical":"Qwen"},
+            {"phonetic":"AV audio engine","canonical":"AVAudioEngine"}
+        ]}
+        """#
+
+    private static let sampleVocab: [VocabEntry] = [
+        VocabEntry(phonetic: "FS event stream", canonical: "FSEventStream"),
+        VocabEntry(phonetic: "Quinn", canonical: "Qwen"),
+        VocabEntry(phonetic: "AV audio engine", canonical: "AVAudioEngine"),
+    ]
+
     func testParsesVocabularyFromDisk() throws {
         let url = fileURL()
-        try write(#"""
-            {"default":"DEF","vocabulary":["FSEventStream","Qwen","AVAudioEngine"]}
-            """#, to: url)
+        try write(Self.sampleVocabJSON, to: url)
         let store = PresetStore(fileURL: url, materializeIfMissing: false)
-        XCTAssertEqual(store.vocabulary(), ["FSEventStream", "Qwen", "AVAudioEngine"])
+        XCTAssertEqual(store.vocabulary(), Self.sampleVocab)
         XCTAssertNil(store.initialVocabularyWarning)
     }
 
@@ -371,27 +383,20 @@ final class PresetStoreTests: XCTestCase {
         XCTAssertNil(store.initialVocabularyWarning)
     }
 
-    func testEmptyAndWhitespaceVocabularyEntriesDropSilently() throws {
-        let url = fileURL()
-        try write(#"""
-            {"default":"DEF","vocabulary":["","  ","FSEventStream","\t","Qwen"]}
-            """#, to: url)
-        let store = PresetStore(fileURL: url, materializeIfMissing: false)
-        XCTAssertEqual(store.vocabulary(), ["FSEventStream", "Qwen"])
-        XCTAssertNil(store.initialVocabularyWarning)
+    private func entriesObject(_ pairs: [(String, String)]) -> [[String: Any]] {
+        pairs.map { ["phonetic": $0.0, "canonical": $0.1] }
     }
 
     func testFiftyOneEntriesRejectsVocabularyOnly() throws {
         let url = fileURL()
-        let entries = (1...51).map { "term\($0)" }
+        let pairs = (1...51).map { ("p\($0)", "c\($0)") }
         let json = try JSONSerialization.data(withJSONObject: [
             "default": "DEF",
             "overrides": ["com.a": "OVERRIDE-A"],
-            "vocabulary": entries
+            "vocabulary": entriesObject(pairs)
         ])
         try json.write(to: url)
         let store = PresetStore(fileURL: url, materializeIfMissing: false)
-        // Vocabulary cleared, but default + overrides still loaded.
         XCTAssertEqual(store.vocabulary(), [])
         XCTAssertEqual(store.preset(for: "com.a").promptTemplate, "OVERRIDE-A")
         XCTAssertEqual(store.preset(for: nil).promptTemplate, "DEF")
@@ -402,15 +407,16 @@ final class PresetStoreTests: XCTestCase {
         }
     }
 
-    func testEntryOver64BytesRejectsVocabularyOnly() throws {
+    func testEntryPhoneticOver64BytesRejectsVocabularyOnly() throws {
         let url = fileURL()
         let big = String(repeating: "x", count: 65)
-        let payload: [String: Any] = ["default": "DEF", "vocabulary": ["ok", big]]
-        let json = try JSONSerialization.data(withJSONObject: payload)
-        try json.write(to: url)
+        let payload: [String: Any] = [
+            "default": "DEF",
+            "vocabulary": entriesObject([("ok", "Ok"), (big, "Big")])
+        ]
+        try JSONSerialization.data(withJSONObject: payload).write(to: url)
         let store = PresetStore(fileURL: url, materializeIfMissing: false)
         XCTAssertEqual(store.vocabulary(), [])
-        XCTAssertEqual(store.preset(for: nil).promptTemplate, "DEF")
         if case .vocabEntryTooLong(let bytes) = store.initialVocabularyWarning {
             XCTAssertEqual(bytes, 65)
         } else {
@@ -418,11 +424,32 @@ final class PresetStoreTests: XCTestCase {
         }
     }
 
-    func testWrappedVocabularyOverCapRejectsVocabularyOnly() throws {
+    func testEntryCanonicalOver64BytesRejectsVocabularyOnly() throws {
         let url = fileURL()
-        // 12 entries × 64 bytes = 768 B + 11 × 2 B separators = 790 B billed > 512 B cap.
-        let entries = (1...12).map { _ in String(repeating: "x", count: 64) }
-        let json = try JSONSerialization.data(withJSONObject: ["default": "DEF", "vocabulary": entries])
+        let big = String(repeating: "x", count: 65)
+        let payload: [String: Any] = [
+            "default": "DEF",
+            "vocabulary": entriesObject([("short", big)])
+        ]
+        try JSONSerialization.data(withJSONObject: payload).write(to: url)
+        let store = PresetStore(fileURL: url, materializeIfMissing: false)
+        XCTAssertEqual(store.vocabulary(), [])
+        if case .vocabEntryTooLong(let bytes) = store.initialVocabularyWarning {
+            XCTAssertEqual(bytes, 65)
+        } else {
+            XCTFail("expected .vocabEntryTooLong, got \(String(describing: store.initialVocabularyWarning))")
+        }
+    }
+
+    func testTotalBytesOverCapRejectsVocabularyOnly() throws {
+        let url = fileURL()
+        // 5 entries × (60 + 60) bytes phonetic+canonical = 600 B billed > 512 B cap.
+        let big = String(repeating: "x", count: 60)
+        let pairs = (1...5).map { _ in (big, big) }
+        let json = try JSONSerialization.data(withJSONObject: [
+            "default": "DEF",
+            "vocabulary": entriesObject(pairs)
+        ])
         try json.write(to: url)
         let store = PresetStore(fileURL: url, materializeIfMissing: false)
         XCTAssertEqual(store.vocabulary(), [])
@@ -434,9 +461,12 @@ final class PresetStoreTests: XCTestCase {
     func testFirstViolationWinsCountBeforeEntryLength() throws {
         let url = fileURL()
         // 51 entries AND one is 100 chars — count check fires first.
-        var entries = (1...50).map { "t\($0)" }
-        entries.append(String(repeating: "y", count: 100))
-        let json = try JSONSerialization.data(withJSONObject: ["default": "DEF", "vocabulary": entries])
+        var pairs = (1...50).map { ("p\($0)", "c\($0)") }
+        pairs.append((String(repeating: "y", count: 100), "ok"))
+        let json = try JSONSerialization.data(withJSONObject: [
+            "default": "DEF",
+            "vocabulary": entriesObject(pairs)
+        ])
         try json.write(to: url)
         let store = PresetStore(fileURL: url, materializeIfMissing: false)
         if case .tooManyVocabEntries = store.initialVocabularyWarning { } else {
@@ -457,47 +487,80 @@ final class PresetStoreTests: XCTestCase {
         XCTAssertEqual(store.initialVocabularyWarning, .vocabularyMalformed)
     }
 
-    func testMalformedVocabularyNumberRejectedAsPartialFailure() throws {
+    func testMalformedVocabularyBareStringEntriesRejected() throws {
+        // v1.1.0 schema was bare strings; v1.1.1 requires pair-objects.
         let url = fileURL()
-        try write(#"{"default":"DEF","vocabulary":42}"#, to: url)
+        try write(#"{"default":"DEF","vocabulary":["FSEventStream","Qwen"]}"#, to: url)
         let store = PresetStore(fileURL: url, materializeIfMissing: false)
         XCTAssertEqual(store.vocabulary(), [])
-        XCTAssertEqual(store.preset(for: nil).promptTemplate, "DEF")
         XCTAssertEqual(store.initialVocabularyWarning, .vocabularyMalformed)
     }
 
-    func testMalformedVocabularyMixedElementTypesRejected() throws {
+    func testMalformedVocabularyMissingCanonicalRejected() throws {
         let url = fileURL()
-        try write(#"{"default":"DEF","vocabulary":["FSEventStream",42]}"#, to: url)
+        try write(#"{"default":"DEF","vocabulary":[{"phonetic":"Quinn"}]}"#, to: url)
         let store = PresetStore(fileURL: url, materializeIfMissing: false)
         XCTAssertEqual(store.vocabulary(), [])
         XCTAssertEqual(store.initialVocabularyWarning, .vocabularyMalformed)
+    }
+
+    func testMalformedVocabularyEmptyPhoneticRejected() throws {
+        let url = fileURL()
+        try write(#"{"default":"DEF","vocabulary":[{"phonetic":"","canonical":"Qwen"}]}"#, to: url)
+        let store = PresetStore(fileURL: url, materializeIfMissing: false)
+        XCTAssertEqual(store.vocabulary(), [])
+        XCTAssertEqual(store.initialVocabularyWarning, .vocabularyMalformed)
+    }
+
+    func testEntryBothFieldsEmptyAfterTrimDropsSilently() throws {
+        let url = fileURL()
+        // Both empty-after-trim → drop (permissive). One good entry remains.
+        try write(#"""
+            {"default":"DEF","vocabulary":[
+                {"phonetic":"   ","canonical":""},
+                {"phonetic":"Quinn","canonical":"Qwen"}
+            ]}
+            """#, to: url)
+        let store = PresetStore(fileURL: url, materializeIfMissing: false)
+        XCTAssertEqual(store.vocabulary(), [VocabEntry(phonetic: "Quinn", canonical: "Qwen")])
+        XCTAssertNil(store.initialVocabularyWarning)
     }
 
     func testNullEntriesInVocabularyArrayDropSilently() throws {
-        // null entries are tolerated like empty-after-trim entries — consistent
-        // with the permissive hand-editing model (accidental commas / nulls).
         let url = fileURL()
-        try write(#"{"default":"DEF","vocabulary":["FSEventStream",null,"Qwen",null]}"#, to: url)
+        try write(#"""
+            {"default":"DEF","vocabulary":[
+                {"phonetic":"Quinn","canonical":"Qwen"},
+                null,
+                {"phonetic":"FS event stream","canonical":"FSEventStream"},
+                null
+            ]}
+            """#, to: url)
         let store = PresetStore(fileURL: url, materializeIfMissing: false)
-        XCTAssertEqual(store.vocabulary(), ["FSEventStream", "Qwen"])
+        XCTAssertEqual(store.vocabulary(), [
+            VocabEntry(phonetic: "Quinn", canonical: "Qwen"),
+            VocabEntry(phonetic: "FS event stream", canonical: "FSEventStream"),
+        ])
         XCTAssertNil(store.initialVocabularyWarning)
     }
 
     // MARK: - Reload dedupe + transition
 
+    private func badPairEntryPayload() throws -> Data {
+        let big = String(repeating: "x", count: 65)
+        return try JSONSerialization.data(withJSONObject: [
+            "default": "DEF",
+            "vocabulary": [["phonetic": big, "canonical": "ok"]]
+        ])
+    }
+
     func testReloadDedupesSameWarningOnRepeatLoads() throws {
         let url = fileURL()
-        // Initial: clean. Then write same bad vocab twice. First reload surfaces;
-        // second reload of identical content returns nil (dedupe).
         try write(#"{"default":"DEF"}"#, to: url)
         let store = PresetStore(fileURL: url, materializeIfMissing: false)
         XCTAssertNil(store.initialVocabularyWarning)
 
-        let bad = String(repeating: "x", count: 65)
-        let badPayload: [String: Any] = ["default": "DEF", "vocabulary": ["ok", bad]]
-        try JSONSerialization.data(withJSONObject: badPayload).write(to: url)
-
+        try badPairEntryPayload().write(to: url)
         let first = try store.reload()
         if case .vocabEntryTooLong = first.vocabularyWarning { } else {
             XCTFail("first reload should surface .vocabEntryTooLong, got \(String(describing: first.vocabularyWarning))")
@@ -511,14 +574,10 @@ final class PresetStoreTests: XCTestCase {
         try write(#"{"default":"DEF"}"#, to: url)
         let store = PresetStore(fileURL: url, materializeIfMissing: false)
 
-        // First: too-long entry.
-        let bad = String(repeating: "x", count: 65)
-        try JSONSerialization.data(withJSONObject: ["default": "DEF", "vocabulary": ["ok", bad]])
-            .write(to: url)
+        try badPairEntryPayload().write(to: url)
         _ = try store.reload()
 
-        // Now switch to too-many entries — different discriminant → re-surfaces.
-        let many = (1...51).map { "term\($0)" }
+        let many = (1...51).map { ["phonetic": "p\($0)", "canonical": "c\($0)"] }
         try JSONSerialization.data(withJSONObject: ["default": "DEF", "vocabulary": many])
             .write(to: url)
         let outcome = try store.reload()
@@ -532,42 +591,34 @@ final class PresetStoreTests: XCTestCase {
         try write(#"{"default":"DEF"}"#, to: url)
         let store = PresetStore(fileURL: url, materializeIfMissing: false)
 
-        // Plant a bad vocab, then fix it.
-        let bad = String(repeating: "x", count: 65)
-        try JSONSerialization.data(withJSONObject: ["default": "DEF", "vocabulary": ["ok", bad]])
-            .write(to: url)
+        try badPairEntryPayload().write(to: url)
         _ = try store.reload()
-        try write(#"{"default":"DEF","vocabulary":["FSEventStream"]}"#, to: url)
+
+        try write(#"""
+            {"default":"DEF","vocabulary":[{"phonetic":"Quinn","canonical":"Qwen"}]}
+            """#, to: url)
         let outcome = try store.reload()
         XCTAssertNil(outcome.vocabularyWarning, "recovery (err→nil) must not post a toast")
-        XCTAssertEqual(store.vocabulary(), ["FSEventStream"])
+        XCTAssertEqual(store.vocabulary(), [VocabEntry(phonetic: "Quinn", canonical: "Qwen")])
     }
 
-    // MARK: - Vocabulary helpers
-
-    func testCleanupGlossaryLineEmpty() {
-        XCTAssertNil(PresetStore.cleanupGlossaryLine([]))
-    }
-
-    func testCleanupGlossaryLineMulti() {
-        XCTAssertEqual(
-            PresetStore.cleanupGlossaryLine(["FSEventStream", "Qwen", "AVAudioEngine"]),
-            "Known technical terms (preserve exact spelling, including camelCase): FSEventStream, Qwen, AVAudioEngine."
-        )
-    }
+    // MARK: - Byte-cap accounting
 
     func testVocabularyBilledBytesEmpty() {
         XCTAssertEqual(PresetStore.vocabularyBilledBytes([]), 0)
     }
 
-    func testVocabularyBilledBytesCountsTermsAndSeparators() {
-        // "AB" + ", " + "CDE" = 2 + 2 + 3 = 7 bytes
-        XCTAssertEqual(PresetStore.vocabularyBilledBytes(["AB", "CDE"]), 7)
+    func testVocabularyBilledBytesSumsPhoneticAndCanonical() {
+        // "AB" (2) + "CDE" (3) = 5
+        let vocab = [VocabEntry(phonetic: "AB", canonical: "CDE")]
+        XCTAssertEqual(PresetStore.vocabularyBilledBytes(vocab), 5)
     }
 
-    func testVocabularyBilledBytesDoesNotChargeForGlossaryWrapper() {
-        // User-facing "max 512 B" promise: wrapper overhead is not billed.
-        // ["FSEventStream"] alone = 13 bytes, not 13 + glossary-prefix bytes.
-        XCTAssertEqual(PresetStore.vocabularyBilledBytes(["FSEventStream"]), 13)
+    func testVocabularyBilledBytesSumsAcrossEntries() {
+        let vocab = [
+            VocabEntry(phonetic: "Quinn", canonical: "Qwen"),       // 5 + 4 = 9
+            VocabEntry(phonetic: "AV audio engine", canonical: "AVAudioEngine"), // 15 + 13 = 28
+        ]
+        XCTAssertEqual(PresetStore.vocabularyBilledBytes(vocab), 9 + 28)
     }
 }

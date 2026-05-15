@@ -1,72 +1,78 @@
-# Custom vocabulary (cleanup-LLM glossary) — manual test
+# Custom vocabulary (deterministic substitution) — manual test
 
 Verifies that the v1.1 Custom Dictionary feature corrects acoustic misses on
 project-specific identifiers without regressing common-English transcription.
 
-> **Mechanism note (2026-05-15):** Vocabulary is injected as a "Known technical
-> terms" glossary line into the Ollama cleanup prompt, above the `<transcript>`
-> fence. The cleanup LLM does the camelCase recovery; whisper's `initial_prompt`
-> is no longer used for biasing (it cannot fuse phonetic chunks). The user-facing
-> behavior is unchanged — `vocabulary` array in `presets.json`, same bounds,
-> same banner pattern. See the spec's "Superseded-mechanism note" for context.
+> **Mechanism note (2026-05-15, iteration 3):** Vocabulary entries are
+> `{phonetic, canonical}` pairs. A deterministic case-insensitive
+> word-boundary regex substitution runs on the cleanup output (and on the
+> fallback path when cleanup is skipped/unavailable). LLM-based variants
+> (`initial_prompt` and cleanup-LLM glossary) both failed manual smoke;
+> see the spec's Superseded-mechanism note for the audit trail. Pass rates
+> should now be deterministic — given a phonetic mapping that matches what
+> whisper actually produces, substitution is 100%.
 
 ## Setup
 
-1. `bash scripts/install-debug.sh && open ~/Applications/SayMoore.app` — daily-launch.
-2. Edit `~/Library/Application Support/SayMoore/presets.json` (or use the menu
-   bar "Edit Presets…" item to reveal it in Finder). Add a top-level key:
+1. `bash scripts/install-debug.sh && open ~/Applications/SayMoore.app`.
+2. Edit `~/Library/Application Support/SayMoore/presets.json`. Add a top-level key:
 
    ```json
-   "vocabulary": ["FSEventStream", "Qwen", "AVAudioEngine"]
+   "vocabulary": [
+     {"phonetic": "FS event stream", "canonical": "FSEventStream"},
+     {"phonetic": "AV audio engine", "canonical": "AVAudioEngine"},
+     {"phonetic": "Quinn", "canonical": "Qwen"},
+     {"phonetic": "Clem", "canonical": "Qwen"}
+   ]
    ```
 
-3. Save. The `PresetWatcher` (FSEvents) hot-reloads within ~100 ms; the next
-   dictation uses the new vocab. No restart needed.
+3. Save. `PresetWatcher` hot-reloads within ~100 ms.
 
 ## Regression phrases (must still transcribe correctly)
 
-Dictate each and check the pasted output. From Slice 3 baseline:
+Dictate each:
 
 - F1 — *"hi tracy, i think we should ship friday and also fix the api timeout"*
 - F2 — *"add a unit test for the cleanup service"*
 - F3 — *"the meeting is at three pm tomorrow"*
 
-Pass: each transcribes to natural English with no glossary-induced artifacts
-(no `Qwen` appearing in random places, no over-frequent identifier mentions).
+Pass: each transcribes to natural English. No spurious substitutions
+(no `Qwen` appearing in random places, no `FSEventStream` mid-sentence).
 
-## Target-term phrases (cleanup-LLM should correct these)
+## Target-term phrases (substitution must fix these)
 
-Dictate 2 each. Record pass/fail per attempt.
+Dictate each twice. The **final pasted output** is what counts.
 
-| Target term | Phrase to dictate | Pass / fail |
+| Target phonetic → canonical | Phrase to dictate | Pass / fail |
 |---|---|---|
-| FSEventStream | *"the FSEventStream callback runs on the watcher's private dispatch queue"* | ☐☐ |
-| Qwen | *"Qwen handled the cleanup well that round"* | ☐☐ |
-| AVAudioEngine | *"AVAudioEngine attached the input node before installing the tap"* | ☐☐ |
+| FS event stream → FSEventStream | *"the FSEventStream callback runs on the watcher's private dispatch queue"* | ☐☐ |
+| Quinn or Clem → Qwen | *"Qwen handled the cleanup well that round"* | ☐☐ |
+| AV audio engine → AVAudioEngine | *"AVAudioEngine attached the input node before installing the tap"* | ☐☐ |
 
-Pass criterion: target term ≥ 5/6 attempts. The measurement is on the final
-pasted output, which has run through cleanup — the raw whisper transcript may
-still say "FS event stream"; that's expected.
+Pass criterion: ≥ 5/6 (substitution should be deterministic — if whisper
+produced one of the phonetic mappings you supplied, the rewrite happens 100%
+of the time). Misses below 5/6 indicate whisper produced a phonetic form
+not in your vocabulary; add another phonetic mapping for that variant.
 
 ## Bounds smoke
 
 For each, verify (a) banner posts, (b) `presets.json` defaults + overrides
-still load (dictate into a known-overridden app like Slack and confirm the
-expected per-app preset is applied), (c) repeat-save of same bad file does
-**not** repost the banner (dedupe on `PresetStore.lastSurfacedVocabWarning`).
+still load (dictate into a known-overridden app like Slack), (c) repeat-save
+of same bad file does **not** repost the banner (dedupe).
 
 | Bad vocab | Expected banner | Pass |
 |---|---|---|
-| 51 entries (any) | "Too many vocabulary entries… (max 50) — vocabulary disabled." | ☐ |
-| One entry > 64 chars | "A vocabulary entry… is too long (max 64 chars) — vocabulary disabled." | ☐ |
-| ~700 B raw total | "Vocabulary… is too large overall (max 512 B) — vocabulary disabled." | ☐ |
+| 51 entries | "Too many vocabulary entries… (max 50) — vocabulary disabled." | ☐ |
+| One entry with `"phonetic"` > 64 chars | "A vocabulary entry… is too long (max 64 chars) — vocabulary disabled." | ☐ |
+| 5 entries × 60 B each (phonetic + canonical) | "Vocabulary… is too large overall (max 512 B) — vocabulary disabled." | ☐ |
 | `"vocabulary": "FSEventStream"` (string, not array) | "Vocabulary… is malformed (expected an array of strings) — vocabulary disabled." | ☐ |
+| `"vocabulary": ["bare string"]` (old v1.1.0 schema) | "Vocabulary… is malformed… — vocabulary disabled." | ☐ |
+| Entry missing `"canonical"` key | "Vocabulary… is malformed… — vocabulary disabled." | ☐ |
 
 ## Init-time + MenuBarController paths
 
 - **Init-time:** Quit the app. Edit `presets.json` to contain a 51-entry vocab.
-  Relaunch. The "Too many vocabulary entries…" banner should post at launch.
-  Open `presets.json` again (don't change anything) and `touch` it to trigger
-  a reload — banner should **not** repost (dedupe).
-- **MenuBarController:** With a bad vocab still on disk, click the menu's
-  "Reload Presets" item → banner posts via the shared helper.
+  Relaunch. The "Too many vocabulary entries…" banner posts at launch.
+  Touch `presets.json` again (no changes) → banner should **not** repost (dedupe).
+- **MenuBarController:** With a bad vocab on disk, click "Reload Presets" →
+  banner posts via the shared helper.
