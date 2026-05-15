@@ -34,7 +34,10 @@ final class CleanupService: TranscriptCleaning, @unchecked Sendable {
     }
 
     static func buildPrompt(template: String, transcript: String) -> String {
-        let fenced = "<transcript>\n\(transcript)\n</transcript>"
+        let safe = transcript
+            .replacingOccurrences(of: "</transcript>", with: "</\u{200B}transcript>")
+            .replacingOccurrences(of: "<transcript>", with: "<\u{200B}transcript>")
+        let fenced = "<transcript>\n\(safe)\n</transcript>"
         return template.replacingOccurrences(of: "{{transcript}}", with: fenced)
     }
 }
