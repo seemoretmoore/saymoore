@@ -420,7 +420,7 @@ final class PresetStoreTests: XCTestCase {
 
     func testWrappedVocabularyOverCapRejectsVocabularyOnly() throws {
         let url = fileURL()
-        // 12 entries × 64 bytes = 768 B raw + wrapper + ", " separators > 512 B cap.
+        // 12 entries × 64 bytes = 768 B + 11 × 2 B separators = 790 B billed > 512 B cap.
         let entries = (1...12).map { _ in String(repeating: "x", count: 64) }
         let json = try JSONSerialization.data(withJSONObject: ["default": "DEF", "vocabulary": entries])
         try json.write(to: url)
@@ -543,23 +543,31 @@ final class PresetStoreTests: XCTestCase {
         XCTAssertEqual(store.vocabulary(), ["FSEventStream"])
     }
 
-    // MARK: - Vocabulary formatter
+    // MARK: - Vocabulary helpers
 
-    func testVocabularyPromptStringEmpty() {
-        XCTAssertNil(PresetStore.vocabularyPromptString([]))
+    func testCleanupGlossaryLineEmpty() {
+        XCTAssertNil(PresetStore.cleanupGlossaryLine([]))
     }
 
-    func testVocabularyPromptStringSingle() {
+    func testCleanupGlossaryLineMulti() {
         XCTAssertEqual(
-            PresetStore.vocabularyPromptString(["FSEventStream"]),
-            "The following transcript may include these terms: FSEventStream."
+            PresetStore.cleanupGlossaryLine(["FSEventStream", "Qwen", "AVAudioEngine"]),
+            "Known technical terms (preserve exact spelling, including camelCase): FSEventStream, Qwen, AVAudioEngine."
         )
     }
 
-    func testVocabularyPromptStringMulti() {
-        XCTAssertEqual(
-            PresetStore.vocabularyPromptString(["FSEventStream", "Qwen", "AVAudioEngine"]),
-            "The following transcript may include these terms: FSEventStream, Qwen, AVAudioEngine."
-        )
+    func testVocabularyBilledBytesEmpty() {
+        XCTAssertEqual(PresetStore.vocabularyBilledBytes([]), 0)
+    }
+
+    func testVocabularyBilledBytesCountsTermsAndSeparators() {
+        // "AB" + ", " + "CDE" = 2 + 2 + 3 = 7 bytes
+        XCTAssertEqual(PresetStore.vocabularyBilledBytes(["AB", "CDE"]), 7)
+    }
+
+    func testVocabularyBilledBytesDoesNotChargeForGlossaryWrapper() {
+        // User-facing "max 512 B" promise: wrapper overhead is not billed.
+        // ["FSEventStream"] alone = 13 bytes, not 13 + glossary-prefix bytes.
+        XCTAssertEqual(PresetStore.vocabularyBilledBytes(["FSEventStream"]), 13)
     }
 }

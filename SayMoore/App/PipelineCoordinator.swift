@@ -133,8 +133,7 @@ final class PipelineCoordinator {
         do {
             transcript = try await transcription.transcribe(
                 samples: samples,
-                sampleRate: 16_000,
-                vocabulary: presets.vocabulary()
+                sampleRate: 16_000
             )
         } catch {
             Log.transcribe.error("transcription failed: \(String(describing: error), privacy: .public)")

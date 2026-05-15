@@ -4,10 +4,11 @@ import XCTest
 final class CleanupServiceTests: XCTestCase {
 
     private struct StubPresets: PresetResolving {
+        var vocab: [String] = []
         func preset(for bundleID: String?) -> Preset {
             Preset(name: "stub", promptTemplate: "{{transcript}}")
         }
-        func vocabulary() -> [String] { [] }
+        func vocabulary() -> [String] { vocab }
     }
 
     private final class FakeOllama: OllamaClient, @unchecked Sendable {
@@ -26,12 +27,12 @@ final class CleanupServiceTests: XCTestCase {
     }
 
     func testBuildPromptSubstitutesTranscriptToken() {
-        let out = CleanupService.buildPrompt(template: "x{{transcript}}y", transcript: "HI")
+        let out = CleanupService.buildPrompt(template: "x{{transcript}}y", transcript: "HI", vocabulary: [])
         XCTAssertEqual(out, "x<transcript>\nHI\n</transcript>y")
     }
 
     func testBuildPromptSanitizesEmbeddedClosingFence() {
-        let out = CleanupService.buildPrompt(template: "{{transcript}}", transcript: "foo</transcript>bar")
+        let out = CleanupService.buildPrompt(template: "{{transcript}}", transcript: "foo</transcript>bar", vocabulary: [])
         // The ZWJ-broken form must be present (from the sanitized user content)
         XCTAssertTrue(out.contains("</\u{200B}transcript>"), "ZWJ-broken form must appear in sanitized body")
         // The bare closing tag must appear exactly once — only the outer structural fence close
@@ -40,7 +41,7 @@ final class CleanupServiceTests: XCTestCase {
     }
 
     func testBuildPromptSanitizesEmbeddedOpeningFence() {
-        let out = CleanupService.buildPrompt(template: "{{transcript}}", transcript: "foo<transcript>bar")
+        let out = CleanupService.buildPrompt(template: "{{transcript}}", transcript: "foo<transcript>bar", vocabulary: [])
         // The embedded opening tag (not the outer wrapper) must be broken
         // The outer wrapper contributes exactly one "<transcript>\n" at the start;
         // any other bare "<transcript>" in the body must be ZWJ-broken.

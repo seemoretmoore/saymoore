@@ -146,13 +146,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .notRegularFile:
             return "presets.json is not a regular file — using last-good config."
         case .tooManyVocabEntries:
-            return "Too many vocabulary entries in presets.json (max 50) — biasing disabled."
+            return "Too many vocabulary entries in presets.json (max 50) — vocabulary disabled."
         case .vocabEntryTooLong:
-            return "A vocabulary entry in presets.json is too long (max 64 chars) — biasing disabled."
+            return "A vocabulary entry in presets.json is too long (max 64 chars) — vocabulary disabled."
         case .vocabularyTooLarge:
-            return "Vocabulary in presets.json is too large overall (max 512 B) — biasing disabled."
+            return "Vocabulary in presets.json is too large overall (max 512 B) — vocabulary disabled."
         case .vocabularyMalformed:
-            return "Vocabulary in presets.json is malformed (expected an array of strings) — biasing disabled."
+            return "Vocabulary in presets.json is malformed (expected an array of strings) — vocabulary disabled."
         }
     }
 

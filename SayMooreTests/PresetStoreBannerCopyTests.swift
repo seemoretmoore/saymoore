@@ -42,22 +42,22 @@ final class PresetStoreBannerCopyTests: XCTestCase {
 
     func testBannerCopyTooManyVocabEntries() {
         let copy = AppDelegate.bannerCopy(for: PresetStoreError.tooManyVocabEntries(count: 51))
-        XCTAssertEqual(copy, "Too many vocabulary entries in presets.json (max 50) — biasing disabled.")
+        XCTAssertEqual(copy, "Too many vocabulary entries in presets.json (max 50) — vocabulary disabled.")
     }
 
     func testBannerCopyVocabEntryTooLong() {
         let copy = AppDelegate.bannerCopy(for: PresetStoreError.vocabEntryTooLong(bytes: 65))
-        XCTAssertEqual(copy, "A vocabulary entry in presets.json is too long (max 64 chars) — biasing disabled.")
+        XCTAssertEqual(copy, "A vocabulary entry in presets.json is too long (max 64 chars) — vocabulary disabled.")
     }
 
     func testBannerCopyVocabularyTooLarge() {
         let copy = AppDelegate.bannerCopy(for: PresetStoreError.vocabularyTooLarge(bytes: 700))
-        XCTAssertEqual(copy, "Vocabulary in presets.json is too large overall (max 512 B) — biasing disabled.")
+        XCTAssertEqual(copy, "Vocabulary in presets.json is too large overall (max 512 B) — vocabulary disabled.")
     }
 
     func testBannerCopyVocabularyMalformed() {
         let copy = AppDelegate.bannerCopy(for: PresetStoreError.vocabularyMalformed)
-        XCTAssertEqual(copy, "Vocabulary in presets.json is malformed (expected an array of strings) — biasing disabled.")
+        XCTAssertEqual(copy, "Vocabulary in presets.json is malformed (expected an array of strings) — vocabulary disabled.")
     }
 
     func testBannerCopyUnknownErrorFallback() {

@@ -1,10 +1,8 @@
 import Foundation
 
 protocol TranscriptionService: Sendable {
-    /// Transcribe 16 kHz mono float samples. `vocabulary` is biased into
-    /// whisper.cpp's `initial_prompt` via `PresetStore.vocabularyPromptString`;
-    /// empty list → no biasing.
-    func transcribe(samples: [Float], sampleRate: Int, vocabulary: [String]) async throws -> Transcript
+    /// Transcribe 16 kHz mono float samples.
+    func transcribe(samples: [Float], sampleRate: Int) async throws -> Transcript
 }
 
 #if canImport(whisper)
@@ -35,12 +33,12 @@ final class WhisperTranscriptionService: TranscriptionService, @unchecked Sendab
         }
     }
 
-    func transcribe(samples: [Float], sampleRate: Int, vocabulary: [String]) async throws -> Transcript {
+    func transcribe(samples: [Float], sampleRate: Int) async throws -> Transcript {
         precondition(sampleRate == 16_000, "WhisperTranscriptionService requires 16kHz")
         return try await withCheckedThrowingContinuation { cont in
             serial.async { [self] in
                 do {
-                    let result = try self.transcribeSync(samples: samples, vocabulary: vocabulary)
+                    let result = try self.transcribeSync(samples: samples)
                     cont.resume(returning: result)
                 } catch {
                     cont.resume(throwing: error)
@@ -49,7 +47,7 @@ final class WhisperTranscriptionService: TranscriptionService, @unchecked Sendab
         }
     }
 
-    private func transcribeSync(samples: [Float], vocabulary: [String]) throws -> Transcript {
+    private func transcribeSync(samples: [Float]) throws -> Transcript {
         if ctx == nil {
             lock.lock()
             guard !wasFreed else {
@@ -89,21 +87,6 @@ final class WhisperTranscriptionService: TranscriptionService, @unchecked Sendab
         fparams.language = UnsafePointer(lang)
         defer { free(lang) }
 
-        // initial_prompt: mirrors the language strdup pattern above. Empty/nil
-        // vocab → leave at default NULL (no biasing). UnsafePointer.init does
-        // not accept Optional<UnsafeMutablePointer>, so the unwrap happens via
-        // the non-optional local `p` inside the if branch.
-        var promptCStr: UnsafeMutablePointer<CChar>? = nil
-        defer { if let p = promptCStr { free(p) } }
-        if let prompt = PresetStore.vocabularyPromptString(vocabulary) {
-            promptCStr = prompt.withCString { strdup($0) }
-            if let p = promptCStr {
-                fparams.initial_prompt = UnsafePointer(p)
-            } else {
-                Log.transcribe.warning("strdup returned nil for vocab prompt — biasing dropped silently for this call")
-            }
-        }
-
         let status = samples.withUnsafeBufferPointer { buf -> Int32 in
             whisper_full(localCtx, fparams, buf.baseAddress, Int32(buf.count))
         }
@@ -127,47 +110,23 @@ final class WhisperTranscriptionService: TranscriptionService, @unchecked Sendab
         case modelInitFailed
         case fullFailed(status: Int32)
     }
-
-    /// Test-only helper for `WhisperPromptBudgetTests`. Returns the whisper
-    /// token count for `prompt`, or `nil` if the model can't be loaded.
-    /// Keeps direct `import whisper` out of the test target.
-    static func tokenCount(modelPath: String, prompt: String) -> Int? {
-        var cparams = whisper_context_default_params()
-        cparams.use_gpu = false
-        guard let ctx = whisper_init_from_file_with_params(modelPath, cparams) else { return nil }
-        defer { whisper_free(ctx) }
-        let maxTokens = 512
-        var tokens = [whisper_token](repeating: 0, count: maxTokens)
-        let count = prompt.withCString { cstr in
-            tokens.withUnsafeMutableBufferPointer { buf in
-                whisper_tokenize(ctx, cstr, buf.baseAddress, Int32(maxTokens))
-            }
-        }
-        return count >= 0 ? Int(count) : nil
-    }
 }
 #else
 final class WhisperTranscriptionService: TranscriptionService {
     private let modelPath: String
     init(modelPath: String) { self.modelPath = modelPath }
-    func transcribe(samples: [Float], sampleRate: Int, vocabulary: [String]) async throws -> Transcript {
+    func transcribe(samples: [Float], sampleRate: Int) async throws -> Transcript {
         Log.transcribe.error("whisper.xcframework not linked — run scripts/setup-whisper.sh and re-add to project.yml")
         throw SayMooreError.modelMissing
     }
-    /// `#else` stub so `WhisperPromptBudgetTests` compiles when whisper isn't linked.
-    /// Returns `nil` → the test calls `XCTSkip`, same path as model-missing.
-    static func tokenCount(modelPath: String, prompt: String) -> Int? { nil }
 }
 #endif
 
 final class FakeTranscriptionService: TranscriptionService, @unchecked Sendable {
     var nextResult: Result<Transcript, Error> = .success(Transcript(text: "fake transcript", averageNoSpeechProb: 0))
     private(set) var calls = 0
-    /// Captured for test assertions on vocab-plumbing.
-    private(set) var lastVocabulary: [String] = []
-    func transcribe(samples: [Float], sampleRate: Int, vocabulary: [String]) async throws -> Transcript {
+    func transcribe(samples: [Float], sampleRate: Int) async throws -> Transcript {
         calls += 1
-        lastVocabulary = vocabulary
         return try nextResult.get()
     }
 }

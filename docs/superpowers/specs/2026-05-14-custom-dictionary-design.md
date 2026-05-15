@@ -1,5 +1,7 @@
 # Custom Dictionary — design
 
+> **Superseded-mechanism note (2026-05-15):** Implementation pivoted to cleanup-LLM glossary injection after manual smoke (0/6 target terms) proved whisper `initial_prompt` cannot fuse phonetically-separated identifiers (e.g., spoken "F-S event stream" reaches whisper as five distinct phonetic chunks; token biasing only nudges close-call alternatives, not acoustic boundaries). The Wiring and Bounds sections below describe the **approved-but-disproven** original design; kept verbatim as the audit trail. Vocabulary now flows into the per-app cleanup prompt as a "Known technical terms" glossary line above the `<transcript>` fence. Bounds (50 entries / 64 B / 512 B) remain in force — now justified by LLM-prompt hygiene rather than whisper's ~224-token initial_prompt budget. User-facing config (`vocabulary` array in `presets.json`), banner pattern, and dedupe semantics are unchanged.
+
 **Status:** approved 2026-05-14, queued behind Bundle B+C merge.
 **Owner:** Tracy.
 **Targets:** v1.1 enhancement (no PRD slice collision).

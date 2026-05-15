@@ -40,15 +40,15 @@ Acoustic misses on project-specific identifiers (`FSEventStream` → "FS event s
 }
 ```
 
-The list is wrapped into a sentence and passed to Whisper as `initial_prompt`, biasing decoding toward those terms. Edits hot-reload like the rest of `presets.json`.
+The list is injected as a glossary hint into the Ollama cleanup step, correcting those terms in the final output. Edits hot-reload like the rest of `presets.json`.
 
 **Limits** (defense-in-depth, similar to other `presets.json` bounds):
 
 - Up to 50 entries
 - Up to 64 chars per entry
-- Up to 512 bytes total (wrapped)
+- Up to 512 bytes total (raw terms + separators)
 
-On a violation, vocabulary biasing is disabled for that load and a notification posts; the rest of `presets.json` (default + per-app overrides) keeps working. Repeat saves of the same bad file stay quiet (dedupe). See [`docs/manual-tests/vocab-biasing.md`](docs/manual-tests/vocab-biasing.md) for the test protocol.
+On a violation, vocabulary is disabled for that load and a notification posts; the rest of `presets.json` (default + per-app overrides) keeps working. Repeat saves of the same bad file stay quiet (dedupe). See [`docs/manual-tests/vocab-cleanup-hint.md`](docs/manual-tests/vocab-cleanup-hint.md) for the test protocol.
 
 ## Status / what's shipped
 

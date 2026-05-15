@@ -15,7 +15,7 @@ final class TranscriptionServiceLifecycleTests: XCTestCase {
             // Swallow any error — we only care about no crash / no hang.
             // Use weak capture so a nil-ing between Task creation and execution doesn't crash.
             guard let svc else { return }
-            _ = try? await svc.transcribe(samples: samples, sampleRate: 16_000, vocabulary: [])
+            _ = try? await svc.transcribe(samples: samples, sampleRate: 16_000)
         }
 
         // Drop reference to trigger deinit (may race with the in-flight task).

@@ -166,15 +166,26 @@ final class PresetStore: PresetResolving, @unchecked Sendable {
         return ReloadOutcome(vocabularyWarning: toSurface)
     }
 
-    // MARK: - Vocabulary formatter
+    // MARK: - Vocabulary helpers
 
-    /// Sentence-form wrapper. Returns `nil` for an empty list so callers can
-    /// pass `NULL` to whisper.cpp's `initial_prompt`. Used both by `loadFromDisk`
-    /// (to enforce the byte cap) and by `WhisperTranscriptionService` (to set
-    /// the prompt at transcribe time) — single source of truth, no drift.
-    static func vocabularyPromptString(_ vocab: [String]) -> String? {
+    /// Glossary line injected above the `<transcript>` fence by `CleanupService`.
+    /// Returns `nil` for an empty list so the caller can skip injection entirely.
+    /// Format chosen so the cleanup LLM treats the line as semantic context, not
+    /// part of the transcript.
+    static func cleanupGlossaryLine(_ vocab: [String]) -> String? {
         guard !vocab.isEmpty else { return nil }
-        return "The following transcript may include these terms: \(vocab.joined(separator: ", "))."
+        return "Known technical terms (preserve exact spelling, including camelCase): \(vocab.joined(separator: ", "))."
+    }
+
+    /// Byte count used to enforce the user-facing 512 B cap. Counts raw terms
+    /// joined by `", "` only — the cleanup-glossary wrapper prefix is internal
+    /// overhead and not billed against the user's budget. This keeps the
+    /// "max 512 B" promise stable regardless of future wrapper edits.
+    static func vocabularyBilledBytes(_ vocab: [String]) -> Int {
+        guard !vocab.isEmpty else { return 0 }
+        let termBytes = vocab.reduce(0) { $0 + $1.utf8.count }
+        let separatorBytes = max(0, vocab.count - 1) * 2 // ", "
+        return termBytes + separatorBytes
     }
 
     // MARK: - Disk
@@ -225,10 +236,11 @@ final class PresetStore: PresetResolving, @unchecked Sendable {
     static let maxOverridesCount = 100
     static let maxTemplateBytes = 16 * 1024
 
-    // Vocabulary bounds (mirror A2). 512 B wrapped sentence ≈ ~128 tokens at the
-    // chars/4 rule of thumb, well under whisper.cpp's ~224-token initial_prompt
-    // budget. Theoretical — `WhisperPromptBudgetTests` enforces the actual ≤200-token
-    // assertion via `whisper_tokenize`.
+    // Vocabulary bounds. The 512 B total cap is now justified by cleanup-LLM
+    // prompt hygiene (a runaway list would dilute the per-app template's
+    // instructions and slow inference) rather than by any hard whisper budget —
+    // vocabulary flows into the cleanup glossary, not whisper's initial_prompt.
+    // Caps remain conservative so a malformed list can't blow up the cleanup pass.
     static let maxVocabularyEntries = 50
     static let maxVocabularyEntryBytes = 64
     static let maxVocabularyTotalBytes = 512
@@ -346,8 +358,9 @@ final class PresetStore: PresetResolving, @unchecked Sendable {
         if let bad = trimmed.first(where: { $0.utf8.count > maxVocabularyEntryBytes }) {
             return ([], .vocabEntryTooLong(bytes: bad.utf8.count))
         }
-        if let wrapped = vocabularyPromptString(trimmed), wrapped.utf8.count > maxVocabularyTotalBytes {
-            return ([], .vocabularyTooLarge(bytes: wrapped.utf8.count))
+        let billed = vocabularyBilledBytes(trimmed)
+        if billed > maxVocabularyTotalBytes {
+            return ([], .vocabularyTooLarge(bytes: billed))
         }
         return (trimmed, nil)
     }
