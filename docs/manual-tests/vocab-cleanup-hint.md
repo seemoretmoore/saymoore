@@ -63,9 +63,9 @@ of same bad file does **not** repost the banner (dedupe).
 | Bad vocab | Expected banner | Pass |
 |---|---|---|
 | 51 entries | "Too many vocabulary entries… (max 50) — vocabulary disabled." | ☐ |
-| One entry with `"phonetic"` > 64 chars | "A vocabulary entry… is too long (max 64 chars) — vocabulary disabled." | ☐ |
+| One entry with `"phonetic"` > 64 bytes | "A vocabulary entry… is too long (max 64 bytes) — vocabulary disabled." | ☐ |
 | 5 entries × 60 B each (phonetic + canonical) | "Vocabulary… is too large overall (max 512 B) — vocabulary disabled." | ☐ |
-| `"vocabulary": "FSEventStream"` (string, not array) | "Vocabulary… is malformed (expected an array of strings) — vocabulary disabled." | ☐ |
+| `"vocabulary": "FSEventStream"` (string, not array) | "Vocabulary… is malformed (expected an array of {phonetic, canonical} entries) — vocabulary disabled." | ☐ |
 | `"vocabulary": ["bare string"]` (old v1.1.0 schema) | "Vocabulary… is malformed… — vocabulary disabled." | ☐ |
 | Entry missing `"canonical"` key | "Vocabulary… is malformed… — vocabulary disabled." | ☐ |
 

@@ -47,7 +47,7 @@ final class PresetStoreBannerCopyTests: XCTestCase {
 
     func testBannerCopyVocabEntryTooLong() {
         let copy = AppDelegate.bannerCopy(for: PresetStoreError.vocabEntryTooLong(bytes: 65))
-        XCTAssertEqual(copy, "A vocabulary entry in presets.json is too long (max 64 chars) — vocabulary disabled.")
+        XCTAssertEqual(copy, "A vocabulary entry in presets.json is too long (max 64 bytes) — vocabulary disabled.")
     }
 
     func testBannerCopyVocabularyTooLarge() {
@@ -57,7 +57,7 @@ final class PresetStoreBannerCopyTests: XCTestCase {
 
     func testBannerCopyVocabularyMalformed() {
         let copy = AppDelegate.bannerCopy(for: PresetStoreError.vocabularyMalformed)
-        XCTAssertEqual(copy, "Vocabulary in presets.json is malformed (expected an array of strings) — vocabulary disabled.")
+        XCTAssertEqual(copy, "Vocabulary in presets.json is malformed (expected an array of {phonetic, canonical} entries) — vocabulary disabled.")
     }
 
     func testBannerCopyUnknownErrorFallback() {

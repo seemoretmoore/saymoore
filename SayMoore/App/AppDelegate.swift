@@ -148,11 +148,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .tooManyVocabEntries:
             return "Too many vocabulary entries in presets.json (max 50) — vocabulary disabled."
         case .vocabEntryTooLong:
-            return "A vocabulary entry in presets.json is too long (max 64 chars) — vocabulary disabled."
+            return "A vocabulary entry in presets.json is too long (max 64 bytes) — vocabulary disabled."
         case .vocabularyTooLarge:
             return "Vocabulary in presets.json is too large overall (max 512 B) — vocabulary disabled."
         case .vocabularyMalformed:
-            return "Vocabulary in presets.json is malformed (expected an array of strings) — vocabulary disabled."
+            return "Vocabulary in presets.json is malformed (expected an array of {phonetic, canonical} entries) — vocabulary disabled."
         }
     }
 

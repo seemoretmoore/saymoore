@@ -569,6 +569,40 @@ final class PresetStoreTests: XCTestCase {
         XCTAssertNil(second.vocabularyWarning, "repeat-reload of same warning must be deduped")
     }
 
+    func testReloadDedupesSameDiscriminantDifferentValue() throws {
+        // bug_005: dedupe must compare discriminants, not full Equatable.
+        // Banner copy in AppDelegate ignores the associated value, so
+        // .vocabEntryTooLong(bytes: 65) and .vocabEntryTooLong(bytes: 70)
+        // render the same user-facing string — surfacing both is spam.
+        let url = fileURL()
+        try write(#"{"default":"DEF"}"#, to: url)
+        let store = PresetStore(fileURL: url, materializeIfMissing: false)
+
+        // First reload: 65-byte phonetic → .vocabEntryTooLong(bytes: 65).
+        let bytes65 = String(repeating: "x", count: 65)
+        try JSONSerialization.data(withJSONObject: [
+            "default": "DEF",
+            "vocabulary": [["phonetic": bytes65, "canonical": "ok"]]
+        ]).write(to: url)
+        let first = try store.reload()
+        if case .vocabEntryTooLong = first.vocabularyWarning { } else {
+            XCTFail("first reload should surface .vocabEntryTooLong, got \(String(describing: first.vocabularyWarning))")
+        }
+
+        // Second reload: 70-byte phonetic → .vocabEntryTooLong(bytes: 70).
+        // Same discriminant, different associated value → must dedupe.
+        let bytes70 = String(repeating: "x", count: 70)
+        try JSONSerialization.data(withJSONObject: [
+            "default": "DEF",
+            "vocabulary": [["phonetic": bytes70, "canonical": "ok"]]
+        ]).write(to: url)
+        let second = try store.reload()
+        XCTAssertNil(
+            second.vocabularyWarning,
+            "same-discriminant repeats with different associated values must dedupe (banner text is identical)"
+        )
+    }
+
     func testReloadSurfacesDifferentWarningAfterPriorOne() throws {
         let url = fileURL()
         try write(#"{"default":"DEF"}"#, to: url)

@@ -20,6 +20,31 @@ enum PresetStoreError: Error, Equatable {
     case vocabularyMalformed
 }
 
+extension PresetStoreError {
+    /// Stable discriminant string for dedupe comparisons that should ignore
+    /// associated values (e.g. `.vocabEntryTooLong(bytes: 65)` and
+    /// `.vocabEntryTooLong(bytes: 70)` map to the same `kind`). The
+    /// user-facing banner copy in `AppDelegate.bannerCopy(for:)` also
+    /// ignores associated values, so dedupe must too — otherwise users
+    /// editing a too-long entry through different magnitudes see the
+    /// identical banner text post repeatedly.
+    var kind: String {
+        switch self {
+        case .fileUnreadable: return "fileUnreadable"
+        case .malformedJSON: return "malformedJSON"
+        case .missingDefaultKey: return "missingDefaultKey"
+        case .fileTooLarge: return "fileTooLarge"
+        case .tooManyOverrides: return "tooManyOverrides"
+        case .templateTooLong: return "templateTooLong"
+        case .notRegularFile: return "notRegularFile"
+        case .tooManyVocabEntries: return "tooManyVocabEntries"
+        case .vocabEntryTooLong: return "vocabEntryTooLong"
+        case .vocabularyTooLarge: return "vocabularyTooLarge"
+        case .vocabularyMalformed: return "vocabularyMalformed"
+        }
+    }
+}
+
 /// A single vocabulary entry: a phonetic rendering (what whisper produces when
 /// the user dictates the term) mapped to the canonical written form (what we
 /// want in the final output). Substitution is case-insensitive on `phonetic`
@@ -166,7 +191,7 @@ final class PresetStore: PresetResolving, @unchecked Sendable {
         currentVocabulary = loaded.vocabulary
 
         let toSurface: PresetStoreError?
-        if let w = loaded.vocabularyWarning, w != lastSurfacedVocabWarning {
+        if let w = loaded.vocabularyWarning, w.kind != lastSurfacedVocabWarning?.kind {
             toSurface = w
         } else {
             toSurface = nil
@@ -180,10 +205,24 @@ final class PresetStore: PresetResolving, @unchecked Sendable {
     /// Apply each entry's `phonetic` → `canonical` substitution to `text`.
     /// Case-insensitive on the phonetic match; word-boundary anchored so
     /// "FS event stream" matches inside "the FS event stream callback" but
-    /// not inside "fsesyentstream". Longest-phonetic-first ordering so a
-    /// shorter prefix doesn't consume a longer match. Deterministic; safe
-    /// to apply on every cleanup path (LLM-cleaned, fast-path, fallback-raw).
+    /// not inside "fsesyentstream". Longest-phonetic-first ordering prevents
+    /// a shorter phonetic from consuming a longer one in the same pass.
+    /// Deterministic; safe to apply on every cleanup path (LLM-cleaned,
+    /// fast-path, fallback-raw).
+    ///
+    /// Caveat — substitutions cascade: each iteration runs against the
+    /// running result, not the original text, so a later entry's phonetic
+    /// CAN match characters introduced by an earlier entry's canonical
+    /// (e.g. `{phonetic:"hi tracy", canonical:"Hi Tracy Park"}` plus
+    /// `{phonetic:"park", canonical:"Parker"}` rewrites "hi tracy" to
+    /// "Hi Tracy Parker"). Safe for the bundled vocabulary — all default
+    /// canonicals are joined-identifier form with no internal word
+    /// boundaries — but users authoring multi-word canonicals should avoid
+    /// pairs where one entry's phonetic appears inside another's canonical.
+    /// A future revision may move to one-pass alternation against the
+    /// original text.
     static func applyVocabSubstitutions(to text: String, vocab: [VocabEntry]) -> String {
+        Log.presets.info("vocab-sub → vocabCount=\(vocab.count, privacy: .public) textIn=\"\(text, privacy: .public)\"")
         guard !vocab.isEmpty, !text.isEmpty else { return text }
         let sorted = vocab.sorted { $0.phonetic.utf8.count > $1.phonetic.utf8.count }
         var result = text
@@ -195,7 +234,11 @@ final class PresetStore: PresetResolving, @unchecked Sendable {
             }
             let template = NSRegularExpression.escapedTemplate(for: entry.canonical)
             let range = NSRange(result.startIndex..., in: result)
+            let before = result
             result = regex.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: template)
+            if result != before {
+                Log.presets.info("vocab-sub HIT phonetic=\(entry.phonetic, privacy: .public) → canonical=\(entry.canonical, privacy: .public)")
+            }
         }
         return result
     }

@@ -12,7 +12,6 @@
     {"phonetic": "AV audio converter", "canonical": "AVAudioConverter"},
     {"phonetic": "Quinn", "canonical": "Qwen"},
     {"phonetic": "Clem", "canonical": "Qwen"},
-    {"phonetic": "say more", "canonical": "SayMoore"},
     {"phonetic": "Swift UI", "canonical": "SwiftUI"}
   ]
 }

@@ -50,7 +50,7 @@ A deterministic case-insensitive word-boundary substitution runs after the Ollam
 **Limits** (defense-in-depth, similar to other `presets.json` bounds):
 
 - Up to 50 entries
-- Up to 64 chars per `phonetic` or `canonical`
+- Up to 64 bytes per `phonetic` or `canonical`
 - Up to 512 bytes total (sum of all phonetic + canonical bytes)
 
 On a violation, vocabulary is disabled for that load and a notification posts; the rest of `presets.json` (default + per-app overrides) keeps working. Repeat saves of the same bad file stay quiet (dedupe). See [`docs/manual-tests/vocab-cleanup-hint.md`](docs/manual-tests/vocab-cleanup-hint.md) for the test protocol.
