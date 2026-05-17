@@ -79,6 +79,8 @@ final class WhisperTranscriptionService: TranscriptionService, @unchecked Sendab
         fparams.translate = false
         fparams.no_context = true
         fparams.suppress_blank = true
+        fparams.suppress_nst = true
+        fparams.no_speech_thold = 0.6
         fparams.single_segment = false
         let lang = "en".withCString { strdup($0)! }
         fparams.language = UnsafePointer(lang)

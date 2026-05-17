@@ -9,10 +9,34 @@ struct Transcript: Equatable, Sendable {
     let text: String
     let averageNoSpeechProb: Float
 
-    static let garbageThreshold: Float = 0.90
+    static let garbageThreshold: Float = 0.60
+
+    // Whisper stock hallucinations on silence / near-silence. Compared case-insensitively
+    // against the trimmed transcript. Match is exact (whole-utterance), not substring —
+    // a real sentence ending in "thank you." is preserved.
+    static let hallucinations: Set<String> = [
+        "",
+        ".",
+        "you",
+        "you.",
+        "thank you",
+        "thank you.",
+        "thanks",
+        "thanks.",
+        "thanks for watching",
+        "thanks for watching.",
+        "thanks for watching!",
+        "[blank_audio]",
+        "(silence)",
+        "bye",
+        "bye.",
+        "bye!",
+    ]
 
     var isGarbage: Bool {
-        averageNoSpeechProb > Self.garbageThreshold
+        if averageNoSpeechProb > Self.garbageThreshold { return true }
+        let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return Self.hallucinations.contains(normalized)
     }
 
     var wordCount: Int {
