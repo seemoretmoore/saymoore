@@ -27,15 +27,15 @@ final class TranscriptTests: XCTestCase {
 
     func testIsGarbageWhenAvgNoSpeechProbAboveThreshold() {
         let r = Transcript.fromSegments([
-            TranscriptSegment(text: "...", noSpeechProb: 0.92),
-            TranscriptSegment(text: "...", noSpeechProb: 0.95),
+            TranscriptSegment(text: "real speech", noSpeechProb: 0.70),
+            TranscriptSegment(text: "real speech", noSpeechProb: 0.80),
         ])
-        XCTAssertTrue(r.isGarbage)
+        XCTAssertTrue(r.isGarbage) // 0.75 avg > 0.60 threshold
     }
 
     func testIsNotGarbageAtBoundary() {
         let r = Transcript.fromSegments([
-            TranscriptSegment(text: "real speech", noSpeechProb: 0.90),
+            TranscriptSegment(text: "real speech", noSpeechProb: 0.60),
         ])
         XCTAssertFalse(r.isGarbage) // strict >, not >=
     }
@@ -43,6 +43,26 @@ final class TranscriptTests: XCTestCase {
     func testIsNotGarbageForLowProb() {
         let r = Transcript.fromSegments([
             TranscriptSegment(text: "hello", noSpeechProb: 0.05)
+        ])
+        XCTAssertFalse(r.isGarbage)
+    }
+
+    func testIsGarbageForKnownHallucinationsEvenAtLowProb() {
+        // Whisper sometimes emits stock phrases on silence with deceptively low
+        // noSpeechProb — the denylist catches them regardless of prob.
+        for phrase in ["Thank you.", "thank you", "Thanks for watching.", "you", ".", "  Thank you.  "] {
+            let r = Transcript.fromSegments([
+                TranscriptSegment(text: phrase, noSpeechProb: 0.10)
+            ])
+            XCTAssertTrue(r.isGarbage, "expected '\(phrase)' to be flagged as hallucination")
+        }
+    }
+
+    func testRealSentenceEndingInThankYouIsNotGarbage() {
+        // Denylist is exact whole-utterance match — a real sentence containing
+        // "thank you" as a tail is preserved.
+        let r = Transcript.fromSegments([
+            TranscriptSegment(text: "I appreciate the review, thank you.", noSpeechProb: 0.10)
         ])
         XCTAssertFalse(r.isGarbage)
     }
