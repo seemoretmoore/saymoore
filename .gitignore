@@ -37,6 +37,9 @@ SayMoore/Resources/presets.json
 Vendor/whisper.xcframework/
 Vendor/.whisper-version
 
+# Vendored Silero VAD ONNX model (~2 MB; produced by scripts/setup-silero.sh)
+Vendor/silero-vad/
+
 # macOS
 .DS_Store
 .AppleDouble
