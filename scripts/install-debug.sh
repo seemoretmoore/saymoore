@@ -4,7 +4,11 @@
 # build-product cache. Run after every Debug build before relaunching.
 set -euo pipefail
 
-DERIVED=$(find "$HOME/Library/Developer/Xcode/DerivedData" -name SayMoore.app -path '*Debug/*' -print -quit)
+DERIVED=$(find "$HOME/Library/Developer/Xcode/DerivedData" -name SayMoore.app -path '*Debug/*' -print0 \
+    | xargs -0 stat -f "%m %N" \
+    | sort -rn \
+    | head -1 \
+    | cut -d' ' -f2-)
 if [ -z "$DERIVED" ] || [ ! -d "$DERIVED" ]; then
     echo "error: no Debug SayMoore.app found under DerivedData. Build first." >&2
     exit 1

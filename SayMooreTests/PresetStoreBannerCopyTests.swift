@@ -40,13 +40,33 @@ final class PresetStoreBannerCopyTests: XCTestCase {
         XCTAssertEqual(copy, "presets.json is not a regular file — using last-good config.")
     }
 
+    func testBannerCopyTooManyVocabEntries() {
+        let copy = AppDelegate.bannerCopy(for: PresetStoreError.tooManyVocabEntries(count: 51))
+        XCTAssertEqual(copy, "Too many vocabulary entries in presets.json (max 50) — vocabulary disabled.")
+    }
+
+    func testBannerCopyVocabEntryTooLong() {
+        let copy = AppDelegate.bannerCopy(for: PresetStoreError.vocabEntryTooLong(bytes: 65))
+        XCTAssertEqual(copy, "A vocabulary entry in presets.json is too long (max 64 bytes) — vocabulary disabled.")
+    }
+
+    func testBannerCopyVocabularyTooLarge() {
+        let copy = AppDelegate.bannerCopy(for: PresetStoreError.vocabularyTooLarge(bytes: 700))
+        XCTAssertEqual(copy, "Vocabulary in presets.json is too large overall (max 512 B) — vocabulary disabled.")
+    }
+
+    func testBannerCopyVocabularyMalformed() {
+        let copy = AppDelegate.bannerCopy(for: PresetStoreError.vocabularyMalformed)
+        XCTAssertEqual(copy, "Vocabulary in presets.json is malformed (expected an array of {phonetic, canonical} entries) — vocabulary disabled.")
+    }
+
     func testBannerCopyUnknownErrorFallback() {
         struct SomeOtherError: Error {}
         let copy = AppDelegate.bannerCopy(for: SomeOtherError())
         XCTAssertEqual(copy, "presets.json error — using last-good config.")
     }
 
-    // MARK: - Verify all 7 PresetStoreError cases are covered (exhaustiveness guard)
+    // MARK: - Verify all PresetStoreError cases are covered (exhaustiveness guard)
 
     func testAllPresetStoreErrorCasesHaveDistinctCopy() {
         let cases: [PresetStoreError] = [
@@ -57,9 +77,13 @@ final class PresetStoreBannerCopyTests: XCTestCase {
             .tooManyOverrides(count: 1),
             .templateTooLong(bytes: 1),
             .notRegularFile,
+            .tooManyVocabEntries(count: 1),
+            .vocabEntryTooLong(bytes: 1),
+            .vocabularyTooLarge(bytes: 1),
+            .vocabularyMalformed,
         ]
         let copies = cases.map { AppDelegate.bannerCopy(for: $0) }
         let unique = Set(copies)
-        XCTAssertEqual(unique.count, cases.count, "each PresetStoreError discriminant must map to unique banner copy")
+        XCTAssertEqual(unique.count, cases.count, "each PresetStoreError case must map to unique banner copy")
     }
 }

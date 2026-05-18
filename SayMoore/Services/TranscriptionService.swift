@@ -1,6 +1,7 @@
 import Foundation
 
 protocol TranscriptionService: Sendable {
+    /// Transcribe 16 kHz mono float samples.
     func transcribe(samples: [Float], sampleRate: Int) async throws -> Transcript
 }
 
