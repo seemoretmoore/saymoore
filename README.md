@@ -28,6 +28,33 @@ The same dictation gets cleaned differently depending on which app is frontmost.
 
 Bundled overrides ship for Slack, Notes, Messages, and BBEdit. Edit `~/Library/Application Support/SayMoore/presets.json` to add your own — changes hot-reload without restart. A "Reload Presets" menu item also triggers a manual reload.
 
+### Custom vocabulary (v1.1)
+
+Acoustic misses on project-specific identifiers (`FSEventStream` → "FS event stream", `Qwen` → "Clem") can be fixed by adding a top-level `vocabulary` array to `presets.json`. Each entry is a `{phonetic, canonical}` pair — the phonetic form is what whisper transcribes; the canonical form is the rewrite:
+
+```json
+{
+  "default": "…",
+  "overrides": { … },
+  "vocabulary": [
+    {"phonetic": "FS event stream", "canonical": "FSEventStream"},
+    {"phonetic": "AV audio engine", "canonical": "AVAudioEngine"},
+    {"phonetic": "Quinn",           "canonical": "Qwen"},
+    {"phonetic": "Clem",            "canonical": "Qwen"}
+  ]
+}
+```
+
+A deterministic case-insensitive word-boundary substitution runs after the Ollama cleanup step (and on the fallback path when cleanup is skipped/unavailable), so each `phonetic` form in the final output gets rewritten to the corresponding `canonical`. Multiple phonetics can map to the same canonical. Edits hot-reload like the rest of `presets.json`.
+
+**Limits** (defense-in-depth, similar to other `presets.json` bounds):
+
+- Up to 50 entries
+- Up to 64 bytes per `phonetic` or `canonical`
+- Up to 512 bytes total (sum of all phonetic + canonical bytes)
+
+On a violation, vocabulary is disabled for that load and a notification posts; the rest of `presets.json` (default + per-app overrides) keeps working. Repeat saves of the same bad file stay quiet (dedupe). See [`docs/manual-tests/vocab-cleanup-hint.md`](docs/manual-tests/vocab-cleanup-hint.md) for the test protocol.
+
 ## Status / what's shipped
 
 This repo is being built one vertical slice at a time. Track progress in the [GitHub Project board](https://github.com/seemoretmoore/saymoore/projects).

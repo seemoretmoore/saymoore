@@ -1,5 +1,13 @@
 # Custom Dictionary — design
 
+> **Superseded-mechanism note (2026-05-15):** Implementation pivoted **twice** in one day; the sections below describe the **original approved-but-disproven design** (whisper `initial_prompt` biasing), kept verbatim as audit trail. Final mechanism is deterministic phonetic→canonical regex substitution at the cleanup chokepoint.
+>
+> **Iteration 1 — whisper `initial_prompt` biasing.** Smoke 0/6: spoken "F-S event stream" reaches whisper as five distinct phonetic chunks; token biasing only nudges close-call alternatives, not acoustic boundaries.
+>
+> **Iteration 2 — cleanup-LLM glossary injection** (vocabulary as `[String]` of canonical forms; injected above `<transcript>` fence). Smoke 0/6 with one wording, 1/6 with stronger override wording. qwen2.5:7b-instruct at default temperature does not reliably honor a single-line precedence directive sandwiched between cleanup rules and content.
+>
+> **Iteration 3 — final, shipping.** Schema becomes `[{phonetic, canonical}]` pairs. `PresetStore.applyVocabSubstitutions(to:vocab:)` runs a case-insensitive, word-boundary-anchored, longest-phonetic-first regex replace on the cleanup output (and on every fallback path) inside `PipelineCoordinator.maybeCleanup`. Deterministic, independent of LLM behavior. `CleanupService` reverted to its pre-vocab signature (no LLM glossary). Bounds (50 entries / 64 B per `phonetic` or `canonical` / 512 B sum) remain in force. User-facing config still hot-reloads via `PresetWatcher`; partial-failure / dedupe / banner pattern preserved.
+
 **Status:** approved 2026-05-14, queued behind Bundle B+C merge.
 **Owner:** seemoretmoore.
 **Targets:** v1.1 enhancement (no PRD slice collision).

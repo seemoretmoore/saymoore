@@ -44,6 +44,13 @@ final class PipelineCoordinatorTests: XCTestCase {
     private final class FakeFrontmost: FrontmostAdapter, @unchecked Sendable {
         var bundleID: String?
     }
+    private struct StubPresets: PresetResolving {
+        func preset(for bundleID: String?) -> Preset {
+            Preset(name: "stub", promptTemplate: "{{transcript}}")
+        }
+        func vocabulary() -> [VocabEntry] { [] }
+    }
+    private let stubPresets = StubPresets()
 
     private func makeServices(
         transcript: Transcript = Transcript(text: "hello", averageNoSpeechProb: 0)
@@ -69,7 +76,7 @@ final class PipelineCoordinatorTests: XCTestCase {
         let state = AppState()
         let coord = PipelineCoordinator(
             appState: state, recorder: rec,
-            transcription: trans, paste: paste
+            transcription: trans, paste: paste, presets: stubPresets
         )
 
         coord.toggle(bundleID: "com.apple.TextEdit")
@@ -93,7 +100,7 @@ final class PipelineCoordinatorTests: XCTestCase {
         let state = AppState()
         let coord = PipelineCoordinator(
             appState: state, recorder: rec,
-            transcription: trans, paste: paste
+            transcription: trans, paste: paste, presets: stubPresets
         )
 
         coord.toggle(bundleID: "com.apple.TextEdit")
@@ -114,7 +121,7 @@ final class PipelineCoordinatorTests: XCTestCase {
         let state = AppState()
         let coord = PipelineCoordinator(
             appState: state, recorder: rec,
-            transcription: trans, paste: paste
+            transcription: trans, paste: paste, presets: stubPresets
         )
         coord.toggle(bundleID: "com.apple.TextEdit")
         coord.toggle(bundleID: nil)
@@ -132,7 +139,7 @@ final class PipelineCoordinatorTests: XCTestCase {
         let state = AppState()
         let coord = PipelineCoordinator(
             appState: state, recorder: rec,
-            transcription: trans, paste: paste
+            transcription: trans, paste: paste, presets: stubPresets
         )
         coord.toggle(bundleID: "com.apple.TextEdit")
         coord.toggle(bundleID: nil)
@@ -151,7 +158,7 @@ final class PipelineCoordinatorTests: XCTestCase {
         let state = AppState()
         let coord = PipelineCoordinator(
             appState: state, recorder: rec,
-            transcription: trans, paste: paste
+            transcription: trans, paste: paste, presets: stubPresets
         )
         coord.toggle(bundleID: "com.apple.TextEdit")
         coord.toggle(bundleID: nil)
@@ -170,7 +177,7 @@ final class PipelineCoordinatorTests: XCTestCase {
         let state = AppState()
         let coord = PipelineCoordinator(
             appState: state, recorder: rec,
-            transcription: trans, paste: paste
+            transcription: trans, paste: paste, presets: stubPresets
         )
         coord.toggle(bundleID: "com.apple.TextEdit")
         XCTAssertEqual(state.state, .recording)
@@ -192,7 +199,7 @@ final class PipelineCoordinatorTests: XCTestCase {
         let state = AppState()
         let coord = PipelineCoordinator(
             appState: state, recorder: rec,
-            transcription: blocking, paste: paste
+            transcription: blocking, paste: paste, presets: stubPresets
         )
         coord.toggle(bundleID: "com.apple.TextEdit")
         coord.toggle(bundleID: nil) // begin processing
@@ -219,7 +226,7 @@ final class PipelineCoordinatorTests: XCTestCase {
         let state = AppState()
         let coord = PipelineCoordinator(
             appState: state, recorder: rec,
-            transcription: blocking, paste: paste
+            transcription: blocking, paste: paste, presets: stubPresets
         )
         coord.toggle(bundleID: "com.apple.TextEdit") // .idle → .recording
         coord.toggle(bundleID: nil)                  // .recording → kicks off pipeline
@@ -243,7 +250,7 @@ final class PipelineCoordinatorTests: XCTestCase {
         let state = AppState()
         let coord = PipelineCoordinator(
             appState: state, recorder: rec,
-            transcription: blocking, paste: paste
+            transcription: blocking, paste: paste, presets: stubPresets
         )
         coord.toggle(bundleID: "com.apple.TextEdit")
         XCTAssertEqual(state.state, .recording)
@@ -267,7 +274,7 @@ final class PipelineCoordinatorTests: XCTestCase {
         var fallbackErrors: [SayMooreError] = []
         let coord = PipelineCoordinator(
             appState: state, recorder: rec,
-            transcription: FakeTranscriptionService(), paste: paste,
+            transcription: FakeTranscriptionService(), paste: paste, presets: stubPresets,
             onFallback: { fallbackErrors.append($0) }
         )
         coord.blocked = true
@@ -287,7 +294,7 @@ final class PipelineCoordinatorTests: XCTestCase {
         let state = AppState()
         let coord = PipelineCoordinator(
             appState: state, recorder: rec,
-            transcription: FakeTranscriptionService(), paste: paste
+            transcription: FakeTranscriptionService(), paste: paste, presets: stubPresets
         )
         coord.blocked = false
         coord.toggle(bundleID: "com.apple.TextEdit")
@@ -308,7 +315,7 @@ final class PipelineCoordinatorTests: XCTestCase {
         var fallbackErrors: [SayMooreError] = []
         let coord = PipelineCoordinator(
             appState: state, recorder: rec,
-            transcription: blocking, paste: paste,
+            transcription: blocking, paste: paste, presets: stubPresets,
             onFallback: { fallbackErrors.append($0) }
         )
         coord.toggle(bundleID: "com.apple.TextEdit") // start recording
@@ -333,7 +340,7 @@ final class PipelineCoordinatorTests: XCTestCase {
         let state = AppState()
         let coord = PipelineCoordinator(
             appState: state, recorder: rec,
-            transcription: trans, paste: paste
+            transcription: trans, paste: paste, presets: stubPresets
         )
         coord.toggle(bundleID: "com.apple.TextEdit")
         coord.toggle(bundleID: nil)

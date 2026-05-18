@@ -13,10 +13,57 @@ enum PresetStoreError: Error, Equatable {
     case tooManyOverrides(count: Int)
     case templateTooLong(bytes: Int)
     case notRegularFile
+    // Vocabulary errors — non-fatal (partial-failure semantics).
+    case tooManyVocabEntries(count: Int)
+    case vocabEntryTooLong(bytes: Int)
+    case vocabularyTooLarge(bytes: Int)
+    case vocabularyMalformed
+}
+
+extension PresetStoreError {
+    /// Stable discriminant string for dedupe comparisons that should ignore
+    /// associated values (e.g. `.vocabEntryTooLong(bytes: 65)` and
+    /// `.vocabEntryTooLong(bytes: 70)` map to the same `kind`). The
+    /// user-facing banner copy in `AppDelegate.bannerCopy(for:)` also
+    /// ignores associated values, so dedupe must too — otherwise users
+    /// editing a too-long entry through different magnitudes see the
+    /// identical banner text post repeatedly.
+    var kind: String {
+        switch self {
+        case .fileUnreadable: return "fileUnreadable"
+        case .malformedJSON: return "malformedJSON"
+        case .missingDefaultKey: return "missingDefaultKey"
+        case .fileTooLarge: return "fileTooLarge"
+        case .tooManyOverrides: return "tooManyOverrides"
+        case .templateTooLong: return "templateTooLong"
+        case .notRegularFile: return "notRegularFile"
+        case .tooManyVocabEntries: return "tooManyVocabEntries"
+        case .vocabEntryTooLong: return "vocabEntryTooLong"
+        case .vocabularyTooLarge: return "vocabularyTooLarge"
+        case .vocabularyMalformed: return "vocabularyMalformed"
+        }
+    }
+}
+
+/// A single vocabulary entry: a phonetic rendering (what whisper produces when
+/// the user dictates the term) mapped to the canonical written form (what we
+/// want in the final output). Substitution is case-insensitive on `phonetic`
+/// and word-boundary anchored.
+struct VocabEntry: Equatable, Sendable {
+    let phonetic: String
+    let canonical: String
 }
 
 protocol PresetResolving: Sendable {
     func preset(for bundleID: String?) -> Preset
+    func vocabulary() -> [VocabEntry]
+}
+
+/// Outcome from `reload()`. `vocabularyWarning` is non-nil only on *transitions*
+/// — first appearance of a warning, or a change to a different warning. Same-
+/// discriminant repeats and recoveries are silenced so menu/FS reloads don't spam.
+struct ReloadOutcome {
+    let vocabularyWarning: PresetStoreError?
 }
 
 final class PresetStore: PresetResolving, @unchecked Sendable {
@@ -51,6 +98,16 @@ final class PresetStore: PresetResolving, @unchecked Sendable {
     private let lock = NSLock()
     private var currentDefault: Preset
     private var currentOverrides: [String: Preset] = [:]
+    private var currentVocabulary: [VocabEntry] = []
+
+    /// One-shot snapshot of any vocabulary warning surfaced during `init`.
+    /// Read once by `AppDelegate.applicationDidFinishLaunching` to post a
+    /// launch-time banner. NOT current state — never reread post-launch.
+    let initialVocabularyWarning: PresetStoreError?
+
+    /// Dedupe state for reload-warning banners (guarded by `lock`).
+    /// Same-discriminant repeats return `vocabularyWarning: nil` from `reload()`.
+    private var lastSurfacedVocabWarning: PresetStoreError?
 
     /// Production initializer. Ensures the preset directory exists, materializes
     /// `presets.json` from the bundled example (or hardcoded baseline as fallback)
@@ -65,6 +122,7 @@ final class PresetStore: PresetResolving, @unchecked Sendable {
     init(fileURL: URL, materializeIfMissing: Bool) {
         self.fileURL = fileURL
         self.currentDefault = Preset(name: "default", promptTemplate: Self.defaultPromptTemplate)
+        var initWarning: PresetStoreError? = nil
 
         if materializeIfMissing {
             try? Self.ensureDirectory(for: fileURL)
@@ -76,7 +134,12 @@ final class PresetStore: PresetResolving, @unchecked Sendable {
         if let loaded = try? Self.loadFromDisk(at: fileURL) {
             self.currentDefault = loaded.defaultPreset
             self.currentOverrides = loaded.overrides
+            self.currentVocabulary = loaded.vocabulary
+            initWarning = loaded.vocabularyWarning
         }
+        self.initialVocabularyWarning = initWarning
+        // Prime dedupe so the next reload of the same broken file stays quiet.
+        self.lastSurfacedVocabWarning = initWarning
     }
 
     func defaultPreset() -> Preset {
@@ -94,6 +157,13 @@ final class PresetStore: PresetResolving, @unchecked Sendable {
         return currentDefault
     }
 
+    /// Current vocabulary list. Empty when no `vocabulary` key is present, the
+    /// list is empty, or the last load had a vocabulary bounds violation.
+    func vocabulary() -> [VocabEntry] {
+        lock.lock(); defer { lock.unlock() }
+        return currentVocabulary
+    }
+
     /// Re-materialize `presets.json` if missing. Idempotent — no-op when the
     /// file already exists. Used by the "Edit Presets…" menu item to recover
     /// gracefully when the user (or a sync tool) deletes the file post-launch.
@@ -105,13 +175,79 @@ final class PresetStore: PresetResolving, @unchecked Sendable {
     }
 
     /// Re-read `presets.json` and atomically replace the in-memory default +
-    /// overrides. On error the previous in-memory state is retained and the
-    /// error is rethrown so the caller can surface a notification.
-    func reload() throws {
+    /// overrides + vocabulary. On hard error (decoder, bounds on the *structural*
+    /// payload) the previous in-memory state is retained and the error is
+    /// rethrown. Vocabulary errors are partial-failure: the rest of the file
+    /// loads normally, vocabulary clears, and `ReloadOutcome.vocabularyWarning`
+    /// is non-nil **only on transitions** (new warning, or a change to a
+    /// different warning) — repeat saves of the same broken file return `nil`
+    /// to avoid banner spam.
+    @discardableResult
+    func reload() throws -> ReloadOutcome {
         let loaded = try Self.loadFromDisk(at: fileURL)
         lock.lock(); defer { lock.unlock() }
         currentDefault = loaded.defaultPreset
         currentOverrides = loaded.overrides
+        currentVocabulary = loaded.vocabulary
+
+        let toSurface: PresetStoreError?
+        if let w = loaded.vocabularyWarning, w.kind != lastSurfacedVocabWarning?.kind {
+            toSurface = w
+        } else {
+            toSurface = nil
+        }
+        lastSurfacedVocabWarning = loaded.vocabularyWarning
+        return ReloadOutcome(vocabularyWarning: toSurface)
+    }
+
+    // MARK: - Vocabulary helpers
+
+    /// Apply each entry's `phonetic` → `canonical` substitution to `text`.
+    /// Case-insensitive on the phonetic match; word-boundary anchored so
+    /// "FS event stream" matches inside "the FS event stream callback" but
+    /// not inside "fsesyentstream". Longest-phonetic-first ordering prevents
+    /// a shorter phonetic from consuming a longer one in the same pass.
+    /// Deterministic; safe to apply on every cleanup path (LLM-cleaned,
+    /// fast-path, fallback-raw).
+    ///
+    /// Caveat — substitutions cascade: each iteration runs against the
+    /// running result, not the original text, so a later entry's phonetic
+    /// CAN match characters introduced by an earlier entry's canonical
+    /// (e.g. `{phonetic:"hi seemoretmoore", canonical:"Hi seemoretmoore Park"}` plus
+    /// `{phonetic:"park", canonical:"Parker"}` rewrites "hi seemoretmoore" to
+    /// "Hi seemoretmoore Parker"). Safe for the bundled vocabulary — all default
+    /// canonicals are joined-identifier form with no internal word
+    /// boundaries — but users authoring multi-word canonicals should avoid
+    /// pairs where one entry's phonetic appears inside another's canonical.
+    /// A future revision may move to one-pass alternation against the
+    /// original text.
+    static func applyVocabSubstitutions(to text: String, vocab: [VocabEntry]) -> String {
+        Log.presets.info("vocab-sub → vocabCount=\(vocab.count, privacy: .public) textIn=\"\(text, privacy: .public)\"")
+        guard !vocab.isEmpty, !text.isEmpty else { return text }
+        let sorted = vocab.sorted { $0.phonetic.utf8.count > $1.phonetic.utf8.count }
+        var result = text
+        for entry in sorted {
+            let escapedPattern = NSRegularExpression.escapedPattern(for: entry.phonetic)
+            let pattern = "\\b\(escapedPattern)\\b"
+            guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
+                continue
+            }
+            let template = NSRegularExpression.escapedTemplate(for: entry.canonical)
+            let range = NSRange(result.startIndex..., in: result)
+            let before = result
+            result = regex.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: template)
+            if result != before {
+                Log.presets.info("vocab-sub HIT phonetic=\(entry.phonetic, privacy: .public) → canonical=\(entry.canonical, privacy: .public)")
+            }
+        }
+        return result
+    }
+
+    /// Byte count used to enforce the user-facing 512 B cap. Sums every entry's
+    /// phonetic + canonical UTF-8 bytes. JSON overhead (braces, quotes, keys)
+    /// is not billed.
+    static func vocabularyBilledBytes(_ vocab: [VocabEntry]) -> Int {
+        vocab.reduce(0) { $0 + $1.phonetic.utf8.count + $1.canonical.utf8.count }
     }
 
     // MARK: - Disk
@@ -119,6 +255,8 @@ final class PresetStore: PresetResolving, @unchecked Sendable {
     private struct LoadedPresets {
         let defaultPreset: Preset
         let overrides: [String: Preset]
+        let vocabulary: [VocabEntry]
+        let vocabularyWarning: PresetStoreError?
     }
 
     private static func ensureDirectory(for fileURL: URL) throws {
@@ -134,9 +272,9 @@ final class PresetStore: PresetResolving, @unchecked Sendable {
     }
 
     /// Seed `presets.json` on first launch. Prefers the bundled
-    /// `presets.example.json` (ships with 5 per-app overrides); falls back to a
-    /// hardcoded default-only payload when the bundle resource is unavailable
-    /// (tests, command-line contexts).
+    /// `presets.example.json` (ships with 5 per-app overrides + sample vocabulary);
+    /// falls back to a hardcoded default-only payload when the bundle resource is
+    /// unavailable (tests, command-line contexts).
     private static func materializeBaseline(at url: URL) throws {
         if let bundled = Bundle.main.url(forResource: "presets.example", withExtension: "json"),
            let data = try? Data(contentsOf: bundled) {
@@ -159,6 +297,15 @@ final class PresetStore: PresetResolving, @unchecked Sendable {
     static let maxFileBytes = 512 * 1024
     static let maxOverridesCount = 100
     static let maxTemplateBytes = 16 * 1024
+
+    // Vocabulary bounds. Caps cover both UX hygiene (50 substitutions per
+    // dictation is already a large workload) and a defense against runaway
+    // regex compilation. `maxVocabularyEntryBytes` applies separately to each
+    // entry's `phonetic` and `canonical`; `maxVocabularyTotalBytes` is the
+    // sum of all phonetic + canonical bytes across all entries.
+    static let maxVocabularyEntries = 50
+    static let maxVocabularyEntryBytes = 64
+    static let maxVocabularyTotalBytes = 512
 
     private static func loadFromDisk(at url: URL) throws -> LoadedPresets {
         // Reject directories / FIFOs / device nodes before opening — Data(contentsOf:)
@@ -228,9 +375,65 @@ final class PresetStore: PresetResolving, @unchecked Sendable {
             }
         }
 
+        // Vocabulary — partial-failure. Permissive `Any` decode so a wrong-type
+        // value (string-not-array, number, etc.) becomes a vocab-only warning
+        // instead of failing the whole structural load.
+        let (vocabulary, vocabularyWarning): ([VocabEntry], PresetStoreError?)
+        if let rawVocab = dict["vocabulary"] {
+            (vocabulary, vocabularyWarning) = parseVocabulary(rawVocab)
+        } else {
+            (vocabulary, vocabularyWarning) = ([], nil)
+        }
+
         return LoadedPresets(
             defaultPreset: Preset(name: "default", promptTemplate: defaultTemplate),
-            overrides: overrides
+            overrides: overrides,
+            vocabulary: vocabulary,
+            vocabularyWarning: vocabularyWarning
         )
+    }
+
+    /// First-violation-wins. Schema: array of `{"phonetic": String, "canonical": String}`
+    /// objects. Both keys required, both strings, both non-empty after trim.
+    /// Entries where either field is empty/missing trigger `.vocabularyMalformed`.
+    /// Explicit JSON null at the array level → empty vocabulary (no warning);
+    /// JSON null inside the array drops silently like empty-after-trim entries.
+    private static func parseVocabulary(_ raw: Any) -> (vocabulary: [VocabEntry], warning: PresetStoreError?) {
+        if raw is NSNull { return ([], nil) }
+        guard let arr = raw as? [Any] else {
+            return ([], .vocabularyMalformed)
+        }
+        var entries: [VocabEntry] = []
+        for v in arr {
+            if v is NSNull { continue }
+            guard let dict = v as? [String: Any],
+                  let rawPhonetic = dict["phonetic"] as? String,
+                  let rawCanonical = dict["canonical"] as? String else {
+                return ([], .vocabularyMalformed)
+            }
+            let phonetic = rawPhonetic.trimmingCharacters(in: .whitespacesAndNewlines)
+            let canonical = rawCanonical.trimmingCharacters(in: .whitespacesAndNewlines)
+            if phonetic.isEmpty && canonical.isEmpty { continue }
+            if phonetic.isEmpty || canonical.isEmpty {
+                return ([], .vocabularyMalformed)
+            }
+            entries.append(VocabEntry(phonetic: phonetic, canonical: canonical))
+        }
+        if entries.count > maxVocabularyEntries {
+            return ([], .tooManyVocabEntries(count: entries.count))
+        }
+        for e in entries {
+            if e.phonetic.utf8.count > maxVocabularyEntryBytes {
+                return ([], .vocabEntryTooLong(bytes: e.phonetic.utf8.count))
+            }
+            if e.canonical.utf8.count > maxVocabularyEntryBytes {
+                return ([], .vocabEntryTooLong(bytes: e.canonical.utf8.count))
+            }
+        }
+        let billed = vocabularyBilledBytes(entries)
+        if billed > maxVocabularyTotalBytes {
+            return ([], .vocabularyTooLarge(bytes: billed))
+        }
+        return (entries, nil)
     }
 }

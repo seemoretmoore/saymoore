@@ -64,18 +64,16 @@ final class MenuBarController: NSObject {
     }
 
     @objc private func reloadPresetsTapped() {
-        do {
-            try presets.reload()
+        // Shared helper posts the existing "preset error" banner on hard
+        // failure and the new vocabulary-warning banner on partial failure
+        // (deduped on PresetStore). The success toast below is menu-action
+        // specific feedback that the FSEvent path intentionally lacks.
+        let ok = AppDelegate.reloadPresetsAndNotifyOnFailure(presets: presets)
+        if ok {
             Log.app.info("presets reloaded from disk")
             NotificationCenterAdapter.shared.notify(
                 title: "SayMoore",
                 body: "Presets reloaded."
-            )
-        } catch {
-            Log.app.error("preset reload failed: \(String(describing: error), privacy: .public)")
-            NotificationCenterAdapter.shared.notify(
-                title: "SayMoore",
-                body: "presets.json invalid; previous preset retained."
             )
         }
     }

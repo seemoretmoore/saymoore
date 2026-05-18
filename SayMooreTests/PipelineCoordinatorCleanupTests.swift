@@ -25,6 +25,13 @@ final class PipelineCoordinatorCleanupTests: XCTestCase {
     private final class FakeFrontmost: FrontmostAdapter, @unchecked Sendable {
         var bundleID: String?
     }
+    private struct StubPresets: PresetResolving {
+        func preset(for bundleID: String?) -> Preset {
+            Preset(name: "stub", promptTemplate: "{{transcript}}")
+        }
+        func vocabulary() -> [VocabEntry] { [] }
+    }
+    private let stubPresets = StubPresets()
     private final class FakeCleanup: TranscriptCleaning, @unchecked Sendable {
         var nextResult: Result<String, Error> = .success("CLEANED")
         private(set) var calls = 0
@@ -58,6 +65,7 @@ final class PipelineCoordinatorCleanupTests: XCTestCase {
             recorder: rec,
             transcription: trans,
             paste: paste,
+            presets: stubPresets,
             cleanup: cleanup,
             onFallback: fallbackSink
         )

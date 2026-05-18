@@ -4,9 +4,11 @@ import XCTest
 final class CleanupServiceTests: XCTestCase {
 
     private struct StubPresets: PresetResolving {
+        var vocab: [VocabEntry] = []
         func preset(for bundleID: String?) -> Preset {
             Preset(name: "stub", promptTemplate: "{{transcript}}")
         }
+        func vocabulary() -> [VocabEntry] { vocab }
     }
 
     private final class FakeOllama: OllamaClient, @unchecked Sendable {

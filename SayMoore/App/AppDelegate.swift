@@ -40,6 +40,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.accessory)
         menuBar = MenuBarController(appState: appState, presets: presets)
 
+        // Surface any vocabulary warning captured during PresetStore.init.
+        // PresetStore has already primed its dedupe state with this warning,
+        // so a subsequent reload of the same broken file won't re-post.
+        if let warn = presets.initialVocabularyWarning {
+            Log.presets.error("vocabulary rejected at launch: \(String(describing: warn), privacy: .public)")
+            NotificationCenterAdapter.shared.notify(
+                title: "Preset warning",
+                body: Self.bannerCopy(for: warn)
+            )
+        }
+
         #if !DEBUG
         // Belt-and-braces: clear any orphan raw-WAVs left by a prior Debug
         // session on this machine. Release builds never write to this dir
@@ -84,15 +95,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Log.app.info("SayMoore terminating")
     }
 
-    private func reloadPresetsAndNotifyOnFailure() {
+    /// Shared by AppDelegate's FSEvent path and `MenuBarController`'s menu-action
+    /// path. Returns `true` on successful reload (whether or not a vocabulary
+    /// warning was surfaced); `false` only on hard reload errors (which post
+    /// the existing error banner). Vocabulary-warning dedupe lives on
+    /// `PresetStore`, so repeat saves of the same broken file stay quiet.
+    @MainActor
+    @discardableResult
+    static func reloadPresetsAndNotifyOnFailure(presets: PresetStore) -> Bool {
         do {
-            try presets.reload()
+            let outcome = try presets.reload()
             Log.presets.info("presets.json reloaded")
+            if let warn = outcome.vocabularyWarning {
+                Log.presets.error("vocabulary rejected on reload: \(String(describing: warn), privacy: .public)")
+                NotificationCenterAdapter.shared.notify(
+                    title: "Preset warning",
+                    body: bannerCopy(for: warn)
+                )
+            }
+            return true
         } catch {
             Log.presets.error("presets reload failed: \(String(describing: error), privacy: .public)")
-            // Q1: method is already @MainActor — no inner Task needed.
-            let body = Self.bannerCopy(for: error)
-            NotificationCenterAdapter.shared.notify(title: "Preset error", body: body)
+            NotificationCenterAdapter.shared.notify(
+                title: "Preset error",
+                body: bannerCopy(for: error)
+            )
+            return false
         }
     }
 
@@ -117,6 +145,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return "A presets.json template is too long (max 16 KB) — using last-good config."
         case .notRegularFile:
             return "presets.json is not a regular file — using last-good config."
+        case .tooManyVocabEntries:
+            return "Too many vocabulary entries in presets.json (max 50) — vocabulary disabled."
+        case .vocabEntryTooLong:
+            return "A vocabulary entry in presets.json is too long (max 64 bytes) — vocabulary disabled."
+        case .vocabularyTooLarge:
+            return "Vocabulary in presets.json is too large overall (max 512 B) — vocabulary disabled."
+        case .vocabularyMalformed:
+            return "Vocabulary in presets.json is malformed (expected an array of {phonetic, canonical} entries) — vocabulary disabled."
         }
     }
 
@@ -168,6 +204,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             recorder: recorder,
             transcription: svc,
             paste: paste,
+            presets: presets,
             cleanup: cleanup,
             recordingsDir: Self.recordingsDirIfPossible(),
             onFallback: { error in notifier.notify(error) }
@@ -207,7 +244,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         let presetsDir = PresetStore.defaultFileURL.deletingLastPathComponent()
         let watcher = PresetWatcher(directory: presetsDir, fileName: "presets.json") { [weak self] in
-            Task { @MainActor in self?.reloadPresetsAndNotifyOnFailure() }
+            guard let self else { return }
+            Task { @MainActor in
+                _ = Self.reloadPresetsAndNotifyOnFailure(presets: self.presets)
+            }
         }
         watcher.start()
         self.presetWatcher = watcher

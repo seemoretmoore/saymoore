@@ -7,6 +7,12 @@ final class AudioRecorder {
     static let targetSampleRate: Double = 16_000
     static let bufferCapacityFrames = 16_000 * 120  // 2 minutes at 16k mono
 
+    // Glass chime ("recording started") plays ~6–12ms AFTER the input tap is
+    // installed, so on internal-speaker + internal-mic setups the chime bleeds
+    // into capture and whisper transcribes it as "ding". Drop the leading
+    // window covering the chime envelope.
+    static let chimeBleedTrimSeconds: Double = 0.25
+
     private let engine = AVAudioEngine()
     private let ringBuffer = AudioRingBuffer(capacity: bufferCapacityFrames)
     private var converter: AudioFormatConverter?
@@ -73,17 +79,25 @@ final class AudioRecorder {
         isRecording = false
         Thread.sleep(forTimeInterval: 0.020)
 
-        let samples = ringBuffer.drainAll()
+        let drained = ringBuffer.drainAll()
 
         if ringBuffer.overflowed {
             throw SayMooreError.recordingTooLong
         }
+
+        let samples = Self.trimChimeBleed(drained, sampleRate: Self.targetSampleRate)
         if samples.isEmpty {
             throw SayMooreError.silentCapture
         }
 
-        Log.audio.info("AudioRecorder stopped (\(samples.count, privacy: .public) samples)")
+        Log.audio.info("AudioRecorder stopped (\(samples.count, privacy: .public) samples, trimmed \(drained.count - samples.count, privacy: .public))")
         return samples
+    }
+
+    static func trimChimeBleed(_ samples: [Float], sampleRate: Double) -> [Float] {
+        let trimCount = Int((sampleRate * Self.chimeBleedTrimSeconds).rounded())
+        guard trimCount > 0, samples.count > trimCount else { return [] }
+        return Array(samples.dropFirst(trimCount))
     }
 
     static func writeWAV(samples: [Float], to url: URL) throws {
