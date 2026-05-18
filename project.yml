@@ -45,8 +45,6 @@ targets:
         excludes:
           - "Info.plist"
         optional: true
-      - path: Vendor/silero-vad/silero_vad.onnx
-        optional: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.seemoretmoore.saymoore

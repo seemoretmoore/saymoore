@@ -70,6 +70,15 @@ mv "$TMP_DST" "$MODEL_DST"
 echo "$SILERO_TAG" > "$STAMP_FILE"
 trap - EXIT
 
+# Also stage into SayMoore/Resources so XcodeGen's resource glob picks it up
+# and Xcode bundles it into SayMoore.app/Contents/Resources. The Resources copy
+# is gitignored; the canonical copy lives under Vendor/.
+RESOURCE_DST="${ROOT_DIR}/SayMoore/Resources/silero_vad.onnx"
+mkdir -p "$(dirname "$RESOURCE_DST")"
+cp "$MODEL_DST" "$RESOURCE_DST"
+
 echo
 echo "✓ silero_vad.onnx installed at $SILERO_TAG ($(wc -c < "$MODEL_DST") bytes)"
+echo "  Vendor copy: $MODEL_DST"
+echo "  Bundled copy: $RESOURCE_DST"
 echo "  Now regenerate the project: bash scripts/generate-project.sh"

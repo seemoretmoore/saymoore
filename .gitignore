@@ -39,6 +39,7 @@ Vendor/.whisper-version
 
 # Vendored Silero VAD ONNX model (~2 MB; produced by scripts/setup-silero.sh)
 Vendor/silero-vad/
+SayMoore/Resources/silero_vad.onnx
 
 # macOS
 .DS_Store
