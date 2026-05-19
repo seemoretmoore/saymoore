@@ -25,10 +25,14 @@ Trigger: Ctrl-Ctrl with frontmost = TextEdit (default preset).
 | # | Channel | Expected | Actual | Pass |
 |---|---|---|---|---|
 | A1 | Sound | Glass chime plays once on start | | |
-| A2 | Menu bar | Icon visibly pulses (alpha alternates ~1.0 ↔ 0.45 every ~700 ms) while in `.recording` | | |
+| A2 | Menu bar | Icon dims to ~50% half-tone (`appearsDisabled`) every 1 s; elapsed `M:SS` counter renders next to the icon and ticks each second | | |
 | A3 | Cursor indicator | **[deferred to Bundle B]** | n/a | n/a |
 | A4 | HUD | **[deferred to Bundle B]** | n/a | n/a |
 | A5 | HUD label collapse | **[deferred to Bundle B]** | n/a | n/a |
+| A6 | Pill at start | Green pill appears behind mic glyph immediately on `.recording` | | |
+| A7 | Pill at ~60 s elapsed | Pill turns yellow (30 s remaining) | | |
+| A8 | Pill at ~80 s elapsed | Pill turns red, concurrent with the "10 seconds remaining" banner | | |
+| A9 | Pill clears on stop/cancel | Pill background gone; icon returns to plain template mic | | |
 
 ## Part B — Per-preset HUD label **[deferred to Bundle B]**
 
@@ -45,7 +49,7 @@ Trigger: Ctrl-Ctrl with frontmost = TextEdit (default preset).
 | # | Trigger | Expected | Actual | Pass |
 |---|---|---|---|---|
 | C1 | Ctrl-Ctrl again (stop) | Pop chime plays; menu icon pulse stops, alpha returns to 1.0 | | |
-| C2 | Esc during recording (cancel) | Funk chime plays (distinct from Pop); pulse stops; NO paste | | |
+| C2 | Esc during recording (cancel) | Basso chime plays (deep "bonk", clearly distinct from Pop); pulse stops; counter clears; NO paste | | |
 | C3 | Re-press Ctrl-Ctrl during `transcribing` state (busy) | Sosumi chime plays; no new recording starts; pipeline continues | | |
 | C4 | Re-press Ctrl-Ctrl during `cleaning` / `pasting` state (busy) | Sosumi chime plays; pipeline continues | | |
 
@@ -76,7 +80,7 @@ Setup: open Xcode fullscreen on the **external** display; menu bar lives on the 
 |---|---|---|---|---|
 | F1 | Muted recording start | No Glass chime; menu-bar icon still pulses | | |
 | F2 | Muted stop | No Pop chime; pulse stops | | |
-| F3 | Muted Esc cancel | No Funk chime; pulse stops; no paste | | |
+| F3 | Muted Esc cancel | No Basso chime; pulse stops; no paste | | |
 | F4 | Muted busy press | No Sosumi chime; pipeline continues | | |
 
 (Confirms the pulse is independent of the audio mute toggle.)

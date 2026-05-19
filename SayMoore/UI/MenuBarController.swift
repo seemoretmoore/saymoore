@@ -3,10 +3,8 @@ import Combine
 
 @MainActor
 final class MenuBarController: NSObject {
-    /// Period of one pulse half-cycle (alpha alternation interval).
-    static let pulseInterval: TimeInterval = 0.7
-    /// Dim alpha used during the low half of the pulse.
-    static let pulseDimAlpha: CGFloat = 0.45
+    /// Tick interval — drives both the half-tone pulse and the M:SS counter.
+    static let pulseInterval: TimeInterval = 1.0
 
     private let statusItem: NSStatusItem
     private let appState: AppState
@@ -15,6 +13,8 @@ final class MenuBarController: NSObject {
     private var cancellables: Set<AnyCancellable> = []
     private var pulseTimer: Timer?
     private var pulseDim: Bool = false
+    private var recordingStartedAt: Date?
+    private var phase: PipelineCoordinator.LengthCapPhase = .idle
 
     init(appState: AppState, presets: PresetStore) {
         self.appState = appState
@@ -24,9 +24,11 @@ final class MenuBarController: NSObject {
         super.init()
 
         if let button = statusItem.button {
-            button.image = Self.image(for: .idle)
+            button.image = Self.image(for: .idle, phase: .idle)
             button.image?.isTemplate = true
             button.toolTip = "SayMoore"
+            button.imagePosition = .imageLeading
+            button.title = ""
         }
 
         let menu = NSMenu()
@@ -85,9 +87,16 @@ final class MenuBarController: NSObject {
         }
     }
 
+    /// Called by AppDelegate via PipelineCoordinator.onLengthCapPhase. Rebuilds
+    /// the menu-bar icon with the appropriate coloured pill backing.
+    func setPhase(_ newPhase: PipelineCoordinator.LengthCapPhase) {
+        guard phase != newPhase else { return }
+        phase = newPhase
+        refreshIcon()
+    }
+
     private func apply(_ state: AppState.State) {
-        statusItem.button?.image = Self.image(for: state)
-        statusItem.button?.image?.isTemplate = true
+        refreshIcon()
         titleItem.title = "SayMoore (\(Self.label(for: state)))"
         if state == .recording {
             startPulse()
@@ -96,9 +105,21 @@ final class MenuBarController: NSObject {
         }
     }
 
+    private func refreshIcon() {
+        guard let button = statusItem.button else { return }
+        let img = Self.image(for: appState.state, phase: phase)
+        button.image = img
+        button.image?.isTemplate = (phase == .idle)
+    }
+
     private func startPulse() {
         guard pulseTimer == nil else { return }
         pulseDim = false
+        recordingStartedAt = Date()
+        // Render the initial "0:00" immediately so the user sees the counter
+        // appear at hotkey-press time rather than waiting one second for the
+        // first tick.
+        statusItem.button?.title = Self.formatElapsed(0)
         // .common so the pulse keeps ticking while the user has the menu open.
         let timer = Timer(timeInterval: Self.pulseInterval, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
@@ -113,22 +134,75 @@ final class MenuBarController: NSObject {
         pulseTimer?.invalidate()
         pulseTimer = nil
         pulseDim = false
-        statusItem.button?.alphaValue = 1.0
+        recordingStartedAt = nil
+        if let button = statusItem.button {
+            button.appearsDisabled = false
+            button.title = ""
+        }
     }
 
     private func tickPulse() {
         pulseDim.toggle()
-        statusItem.button?.alphaValue = pulseDim ? Self.pulseDimAlpha : 1.0
+        guard let button = statusItem.button else { return }
+        button.appearsDisabled = pulseDim
+        if let start = recordingStartedAt {
+            button.title = Self.formatElapsed(Date().timeIntervalSince(start))
+        }
+    }
+
+    static func formatElapsed(_ seconds: TimeInterval) -> String {
+        let total = max(0, Int(seconds))
+        return String(format: "%d:%02d", total / 60, total % 60)
     }
 
 
-    private static func image(for state: AppState.State) -> NSImage? {
-        switch state {
-        case .recording:
-            return NSImage(systemSymbolName: "mic.fill", accessibilityDescription: "SayMoore recording")
-        default:
-            return NSImage(systemSymbolName: "mic", accessibilityDescription: "SayMoore")
+    private static func image(for state: AppState.State, phase: PipelineCoordinator.LengthCapPhase) -> NSImage? {
+        let symbolName = (state == .recording) ? "mic.fill" : "mic"
+        let accessibility = (state == .recording) ? "SayMoore recording" : "SayMoore"
+        if phase == .idle {
+            return NSImage(systemSymbolName: symbolName, accessibilityDescription: accessibility)
         }
+        return pillImage(symbolName: symbolName, accessibility: accessibility, fill: pillColor(for: phase))
+    }
+
+    private static func pillColor(for phase: PipelineCoordinator.LengthCapPhase) -> NSColor {
+        switch phase {
+        case .normal:  return .systemGreen
+        case .caution: return .systemYellow
+        case .warning: return .systemRed
+        case .idle:    return .clear
+        }
+    }
+
+    private static func pillImage(symbolName: String, accessibility: String, fill: NSColor) -> NSImage {
+        let size = NSSize(width: 22, height: 18)
+        let radius: CGFloat = 4
+        let symbolPoint: CGFloat = 12
+        let img = NSImage(size: size, flipped: false) { rect in
+            let path = NSBezierPath(roundedRect: rect.insetBy(dx: 1, dy: 1), xRadius: radius, yRadius: radius)
+            fill.setFill()
+            path.fill()
+            guard let symbol = NSImage(systemSymbolName: symbolName, accessibilityDescription: accessibility) else {
+                return true
+            }
+            let cfg = NSImage.SymbolConfiguration(pointSize: symbolPoint, weight: .semibold)
+            let configured = symbol.withSymbolConfiguration(cfg) ?? symbol
+            let symbolSize = configured.size
+            let target = NSRect(
+                x: (rect.width  - symbolSize.width)  / 2,
+                y: (rect.height - symbolSize.height) / 2,
+                width:  symbolSize.width,
+                height: symbolSize.height
+            )
+            configured.draw(in: target)
+            // Tint the symbol white so it reads on the coloured background.
+            NSColor.white.set()
+            target.fill(using: .sourceAtop)
+            return true
+        }
+        img.isTemplate = false
+        img.accessibilityDescription = accessibility
+        return img
     }
 
     private static func label(for state: AppState.State) -> String {

@@ -18,7 +18,7 @@ final class AudioFeedbackService {
     ) {
         let startSound  = NSSound(named: "Glass")
         let stopSound   = NSSound(named: "Pop")
-        let cancelSound = NSSound(named: "Funk")
+        let cancelSound = NSSound(named: "Basso")
         let busySound   = NSSound(named: "Sosumi")
         self.init(
             muted: muted,
