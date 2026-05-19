@@ -3,10 +3,17 @@ import Foundation
 @MainActor
 final class PipelineCoordinator {
     static let fastPathMaxWordCount = 3
+    /// Wall-clock seconds at which the "30 seconds remaining" colour cue (yellow pill) fires.
+    static let defaultLengthCapCaution: TimeInterval = 60.0
     /// Wall-clock seconds at which the "10 seconds remaining" warning fires.
     static let defaultLengthCapWarning: TimeInterval = 80.0
     /// Wall-clock seconds at which recording is force-stopped.
     static let defaultLengthCapHardStop: TimeInterval = 90.0
+
+    /// Time-remaining tint phase for the menu-bar pill. Cancel/stop returns to `.idle`;
+    /// `.normal` fires immediately on record start (green); `.caution` at 60 s (yellow);
+    /// `.warning` at 80 s alongside the existing length-cap banner (red).
+    enum LengthCapPhase { case idle, normal, caution, warning }
 
     private let appState: AppState
     private let recorder: AudioRecording
@@ -20,17 +27,32 @@ final class PipelineCoordinator {
     #endif
     private let onFallback: (@MainActor (SayMooreError) -> Void)?
     private let vadService: VADService?
+    private let lengthCapCaution: TimeInterval
     private let lengthCapWarning: TimeInterval
     private let lengthCapHardStop: TimeInterval
 
     private var capturedBundleID: String?
     private var processingTask: Task<Void, Never>?
+    private var cautionTimerTask: Task<Void, Never>?
     private var warningTimerTask: Task<Void, Never>?
     private var hardStopTimerTask: Task<Void, Never>?
 
     /// When true, the pipeline refuses to start recording and posts the
     /// `.ollamaEndpointUntrusted` banner. Set by AppDelegate after the trust probe.
     var blocked: Bool = false
+
+    /// Fired when a toggle hotkey arrives while the pipeline is mid-processing
+    /// (`.transcribing` / `.cleaning` / `.pasting`) or while a previous
+    /// `processingTask` is still in flight — i.e. the press is ignored because
+    /// no state transition is possible. Used by `AudioFeedbackService.busy()`.
+    /// Not fired for the `blocked` path (that has its own banner).
+    var onBusyHotkey: (@MainActor () -> Void)?
+
+    /// Fired whenever the length-cap colour phase changes — `.normal` on
+    /// record start, `.caution` at the 60 s mark, `.warning` at 80 s (alongside
+    /// the existing length-cap banner), and `.idle` on any exit from recording.
+    /// Drives the MenuBarController pill tint.
+    var onLengthCapPhase: (@MainActor (LengthCapPhase) -> Void)?
 
     #if DEBUG
     init(
@@ -43,6 +65,7 @@ final class PipelineCoordinator {
         recordingsDir: URL? = nil,
         persistRawWAV: Bool = false,
         vadService: VADService? = nil,
+        lengthCapCaution: TimeInterval = PipelineCoordinator.defaultLengthCapCaution,
         lengthCapWarning: TimeInterval = PipelineCoordinator.defaultLengthCapWarning,
         lengthCapHardStop: TimeInterval = PipelineCoordinator.defaultLengthCapHardStop,
         onFallback: (@MainActor (SayMooreError) -> Void)? = nil
@@ -56,6 +79,7 @@ final class PipelineCoordinator {
         self.recordingsDir = recordingsDir
         self.persistRawWAV = persistRawWAV
         self.vadService = vadService
+        self.lengthCapCaution = lengthCapCaution
         self.lengthCapWarning = lengthCapWarning
         self.lengthCapHardStop = lengthCapHardStop
         self.onFallback = onFallback
@@ -71,6 +95,7 @@ final class PipelineCoordinator {
         cleanup: TranscriptCleaning? = nil,
         recordingsDir: URL? = nil,
         vadService: VADService? = nil,
+        lengthCapCaution: TimeInterval = PipelineCoordinator.defaultLengthCapCaution,
         lengthCapWarning: TimeInterval = PipelineCoordinator.defaultLengthCapWarning,
         lengthCapHardStop: TimeInterval = PipelineCoordinator.defaultLengthCapHardStop,
         onFallback: (@MainActor (SayMooreError) -> Void)? = nil
@@ -83,6 +108,7 @@ final class PipelineCoordinator {
         self.presets = presets
         self.recordingsDir = recordingsDir
         self.vadService = vadService
+        self.lengthCapCaution = lengthCapCaution
         self.lengthCapWarning = lengthCapWarning
         self.lengthCapHardStop = lengthCapHardStop
         self.onFallback = onFallback
@@ -110,6 +136,7 @@ final class PipelineCoordinator {
         }
         if let t = processingTask, !t.isCancelled {
             Log.pipeline.debug("Toggle ignored — pipeline in flight")
+            onBusyHotkey?()
             return
         }
         switch appState.state {
@@ -129,6 +156,7 @@ final class PipelineCoordinator {
             processingTask = Task { await self.processSamples(samples) }
         default:
             Log.pipeline.debug("Toggle ignored in state \(String(describing: self.appState.state), privacy: .public)")
+            onBusyHotkey?()
         }
     }
 
@@ -178,8 +206,16 @@ final class PipelineCoordinator {
 
     private func armLengthCapTimers() {
         cancelLengthCapTimers()
+        onLengthCapPhase?(.normal)
+        let caution = lengthCapCaution
         let warning = lengthCapWarning
         let hard = lengthCapHardStop
+        cautionTimerTask = Task { [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: UInt64(caution * 1_000_000_000))
+            } catch { return }
+            self?.fireLengthCapCaution()
+        }
         warningTimerTask = Task { [weak self] in
             do {
                 try await Task.sleep(nanoseconds: UInt64(warning * 1_000_000_000))
@@ -195,15 +231,25 @@ final class PipelineCoordinator {
     }
 
     private func cancelLengthCapTimers() {
+        cautionTimerTask?.cancel()
+        cautionTimerTask = nil
         warningTimerTask?.cancel()
         warningTimerTask = nil
         hardStopTimerTask?.cancel()
         hardStopTimerTask = nil
+        onLengthCapPhase?(.idle)
+    }
+
+    private func fireLengthCapCaution() {
+        guard appState.state == .recording else { return }
+        Log.pipeline.info("length cap caution fired (\(self.lengthCapCaution, privacy: .public)s) — 30s remaining")
+        onLengthCapPhase?(.caution)
     }
 
     private func fireLengthCapWarning() {
         guard appState.state == .recording else { return }
         Log.pipeline.info("length cap warning fired (\(self.lengthCapWarning, privacy: .public)s)")
+        onLengthCapPhase?(.warning)
         onFallback?(.recordingLengthWarning)
     }
 
