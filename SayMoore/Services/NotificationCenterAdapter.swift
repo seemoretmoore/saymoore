@@ -90,6 +90,8 @@ final class NotificationCenterAdapter: @unchecked Sendable {
             case .inputMonitoring:
                 return ("Input Monitoring permission revoked", "Grant access in System Settings → Privacy & Security → Input Monitoring.")
             }
+        case .watchdogTimeout:
+            return ("Recording stuck", "SayMoore reset itself after 30 seconds without progress. Try again.")
         default:
             return ("SayMoore error", String(describing: error))
         }
