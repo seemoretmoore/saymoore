@@ -14,14 +14,14 @@ final class NotificationCenterAdapter: @unchecked Sendable {
 
     func notify(_ error: SayMooreError) {
         let (title, body) = Self.message(for: error)
-        send(title: title, body: body)
+        deliver(title: title, body: body)
     }
 
     func notify(title: String, body: String) {
-        send(title: title, body: body)
+        deliver(title: title, body: body)
     }
 
-    private func send(title: String, body: String) {
+    private func deliver(title: String, body: String) {
         Log.app.info("notify: \(title, privacy: .public) — \(body, privacy: .public)")
         ensureAuth()
         let content = UNMutableNotificationContent()
