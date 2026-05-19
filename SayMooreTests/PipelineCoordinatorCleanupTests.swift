@@ -6,6 +6,7 @@ final class PipelineCoordinatorCleanupTests: XCTestCase {
 
     private final class FakeRecorder: AudioRecording {
         var isRecording = false
+        var vadService: VADService?
         var samples: [Float] = Array(repeating: 0.5, count: 16_000)
         func start() throws { isRecording = true }
         func stop() throws -> [Float] { isRecording = false; return samples }

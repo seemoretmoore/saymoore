@@ -3,6 +3,10 @@ import Foundation
 @MainActor
 final class PipelineCoordinator {
     static let fastPathMaxWordCount = 3
+    /// Wall-clock seconds at which the "10 seconds remaining" warning fires.
+    static let defaultLengthCapWarning: TimeInterval = 80.0
+    /// Wall-clock seconds at which recording is force-stopped.
+    static let defaultLengthCapHardStop: TimeInterval = 90.0
 
     private let appState: AppState
     private let recorder: AudioRecording
@@ -15,9 +19,14 @@ final class PipelineCoordinator {
     private let persistRawWAV: Bool
     #endif
     private let onFallback: (@MainActor (SayMooreError) -> Void)?
+    private let vadService: VADService?
+    private let lengthCapWarning: TimeInterval
+    private let lengthCapHardStop: TimeInterval
 
     private var capturedBundleID: String?
     private var processingTask: Task<Void, Never>?
+    private var warningTimerTask: Task<Void, Never>?
+    private var hardStopTimerTask: Task<Void, Never>?
 
     /// When true, the pipeline refuses to start recording and posts the
     /// `.ollamaEndpointUntrusted` banner. Set by AppDelegate after the trust probe.
@@ -33,6 +42,9 @@ final class PipelineCoordinator {
         cleanup: TranscriptCleaning? = nil,
         recordingsDir: URL? = nil,
         persistRawWAV: Bool = false,
+        vadService: VADService? = nil,
+        lengthCapWarning: TimeInterval = PipelineCoordinator.defaultLengthCapWarning,
+        lengthCapHardStop: TimeInterval = PipelineCoordinator.defaultLengthCapHardStop,
         onFallback: (@MainActor (SayMooreError) -> Void)? = nil
     ) {
         self.appState = appState
@@ -43,7 +55,11 @@ final class PipelineCoordinator {
         self.presets = presets
         self.recordingsDir = recordingsDir
         self.persistRawWAV = persistRawWAV
+        self.vadService = vadService
+        self.lengthCapWarning = lengthCapWarning
+        self.lengthCapHardStop = lengthCapHardStop
         self.onFallback = onFallback
+        wireVADIfNeeded()
     }
     #else
     init(
@@ -54,6 +70,9 @@ final class PipelineCoordinator {
         presets: PresetResolving,
         cleanup: TranscriptCleaning? = nil,
         recordingsDir: URL? = nil,
+        vadService: VADService? = nil,
+        lengthCapWarning: TimeInterval = PipelineCoordinator.defaultLengthCapWarning,
+        lengthCapHardStop: TimeInterval = PipelineCoordinator.defaultLengthCapHardStop,
         onFallback: (@MainActor (SayMooreError) -> Void)? = nil
     ) {
         self.appState = appState
@@ -63,9 +82,25 @@ final class PipelineCoordinator {
         self.paste = paste
         self.presets = presets
         self.recordingsDir = recordingsDir
+        self.vadService = vadService
+        self.lengthCapWarning = lengthCapWarning
+        self.lengthCapHardStop = lengthCapHardStop
         self.onFallback = onFallback
+        wireVADIfNeeded()
     }
     #endif
+
+    private func wireVADIfNeeded() {
+        guard let vad = vadService else { return }
+        recorder.vadService = vad
+        // VADService fires the observer from its worker queue. Hop to the main
+        // actor to mutate coordinator state.
+        vad.silenceObserver = { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.handleSilenceAutoStop()
+            }
+        }
+    }
 
     func toggle(bundleID: String?) {
         if blocked {
@@ -81,6 +116,7 @@ final class PipelineCoordinator {
         case .idle:
             beginRecording(bundleID: bundleID)
         case .recording:
+            cancelLengthCapTimers()
             let samples: [Float]
             do {
                 samples = try recorder.stop()
@@ -99,6 +135,7 @@ final class PipelineCoordinator {
     func cancel() {
         guard appState.state == .recording else { return }
         recorder.cancel()
+        cancelLengthCapTimers()
         capturedBundleID = nil
         appState.transition(to: .idle)
         Log.pipeline.info("Recording cancelled via Esc")
@@ -109,10 +146,83 @@ final class PipelineCoordinator {
         do {
             try recorder.start()
             appState.transition(to: .recording)
+            armLengthCapTimers()
         } catch {
             Log.audio.error("recorder.start failed: \(String(describing: error), privacy: .public)")
             transitionToError(error)
         }
+    }
+
+    /// Called by the VAD silence observer (post main-actor hop) when accumulated
+    /// silence first crosses VADService's threshold during recording.
+    private func handleSilenceAutoStop() {
+        guard appState.state == .recording else {
+            Log.pipeline.debug("VAD silence fired outside .recording — ignoring")
+            return
+        }
+        Log.pipeline.info("VAD silence threshold crossed — auto-stopping")
+        cancelLengthCapTimers()
+        let samples: [Float]
+        do {
+            samples = try recorder.stop()
+        } catch {
+            Log.audio.error("recorder.stop failed during VAD auto-stop: \(String(describing: error), privacy: .public)")
+            transitionToError(error)
+            return
+        }
+        appState.transition(to: .transcribing)
+        processingTask = Task { await self.processSamples(samples) }
+    }
+
+    // MARK: - Length cap (80s warning / 90s hard stop)
+
+    private func armLengthCapTimers() {
+        cancelLengthCapTimers()
+        let warning = lengthCapWarning
+        let hard = lengthCapHardStop
+        warningTimerTask = Task { [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: UInt64(warning * 1_000_000_000))
+            } catch { return }
+            self?.fireLengthCapWarning()
+        }
+        hardStopTimerTask = Task { [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: UInt64(hard * 1_000_000_000))
+            } catch { return }
+            self?.fireLengthCapHardStop()
+        }
+    }
+
+    private func cancelLengthCapTimers() {
+        warningTimerTask?.cancel()
+        warningTimerTask = nil
+        hardStopTimerTask?.cancel()
+        hardStopTimerTask = nil
+    }
+
+    private func fireLengthCapWarning() {
+        guard appState.state == .recording else { return }
+        Log.pipeline.info("length cap warning fired (\(self.lengthCapWarning, privacy: .public)s)")
+        onFallback?(.recordingLengthWarning)
+    }
+
+    private func fireLengthCapHardStop() {
+        guard appState.state == .recording else { return }
+        Log.pipeline.info("length cap hard-stop fired (\(self.lengthCapHardStop, privacy: .public)s)")
+        let samples: [Float]
+        do {
+            samples = try recorder.stop()
+        } catch {
+            // recordingTooLong from ring overflow shouldn't happen before our 90s cap,
+            // but if anything else fails surface it normally.
+            transitionToError(error)
+            return
+        }
+        // Post the "stopped early" banner before processing kicks off.
+        onFallback?(.recordingTooLong)
+        appState.transition(to: .transcribing)
+        processingTask = Task { await self.processSamples(samples) }
     }
 
     private func processSamples(_ samples: [Float]) async {
@@ -217,6 +327,7 @@ final class PipelineCoordinator {
 
     private func transitionToError(_ error: Error) {
         capturedBundleID = nil
+        cancelLengthCapTimers()
         if let smError = error as? SayMooreError {
             appState.transition(to: .error(smError))
             // onFallback is the single error→banner path. Originally cleanup-only;

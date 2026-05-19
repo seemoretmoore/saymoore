@@ -199,6 +199,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let cleanup = CleanupService(client: ollama, presets: presets)
         let notifier = NotificationCenterAdapter.shared
 
+        // Slice 5: Silero VAD. If the model file fails to load, log and continue
+        // without VAD — the 90s length-cap timer is still armed by PipelineCoordinator.
+        let vadService: VADService?
+        if let sileroPath = Bundle.main.path(forResource: "silero_vad", ofType: "onnx") {
+            do {
+                let backend = try SileroVADBackend(modelPath: sileroPath)
+                vadService = VADService(backend: backend)
+                Log.vad.info("Silero VAD loaded from \(sileroPath, privacy: .public)")
+            } catch {
+                Log.vad.error("Silero VAD init failed, continuing without VAD: \(String(describing: error), privacy: .public)")
+                vadService = nil
+            }
+        } else {
+            Log.vad.error("silero_vad.onnx not found in bundle — run scripts/setup-silero.sh")
+            vadService = nil
+        }
+
         let coord = PipelineCoordinator(
             appState: appState,
             recorder: recorder,
@@ -207,6 +224,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             presets: presets,
             cleanup: cleanup,
             recordingsDir: Self.recordingsDirIfPossible(),
+            vadService: vadService,
             onFallback: { error in notifier.notify(error) }
         )
         // C1: stamp blocked flag immediately so probe results that landed before

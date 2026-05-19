@@ -20,9 +20,15 @@ final class AudioRecorder {
     // Tap-callback runs on the audio thread; lock-protect the rate-limit timestamp.
     private let errorLogLock = OSAllocatedUnfairLock<ContinuousClock.Instant?>(initialState: nil)
 
+    // Optional VAD service. When set, every converted PCM chunk is forwarded
+    // to it from the tap callback. The service buffers + classifies async on
+    // its own worker queue. Set this BEFORE start(); reset is handled here.
+    var vadService: VADService?
+
     func start() throws {
         guard !isRecording else { return }
         ringBuffer.reset()
+        vadService?.reset()
 
         let input = engine.inputNode
         let inputFormat = input.outputFormat(forBus: 0)
@@ -36,6 +42,7 @@ final class AudioRecorder {
         self.converter = conv
 
         let ring = self.ringBuffer
+        let vad = self.vadService
         input.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { [weak self] buffer, _ in
             do {
                 let converted = try conv.convert(buffer)
@@ -43,6 +50,12 @@ final class AudioRecorder {
                 let frames = Int(converted.frameLength)
                 let bp = UnsafeBufferPointer(start: ch, count: frames)
                 _ = ring.write(bp)
+                // Forward to VAD if attached. One small heap alloc per ~22ms
+                // tap (typical chunk ~341 samples post-convert at 16kHz).
+                // Acceptable for dictation — not hard-real-time audio.
+                if let vad {
+                    vad.feed(Array(bp))
+                }
             } catch {
                 // Rate-limit converter error logs to 1/sec across audio-thread invocations.
                 guard let self else { return }
