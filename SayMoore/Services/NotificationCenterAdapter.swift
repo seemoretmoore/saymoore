@@ -81,6 +81,15 @@ final class NotificationCenterAdapter: @unchecked Sendable {
             return ("Mic permission denied", "Grant microphone access in System Settings → Privacy & Security.")
         case .audioEngineFailed:
             return ("Audio engine failed", "Could not start recording. Check audio devices and try again.")
+        case .permissionRevokedMidSession(let permission):
+            switch permission {
+            case .microphone:
+                return ("Mic permission revoked", "Recording stopped. Grant microphone access in System Settings → Privacy & Security → Microphone.")
+            case .accessibility:
+                return ("Accessibility permission revoked", "Grant access in System Settings → Privacy & Security → Accessibility.")
+            case .inputMonitoring:
+                return ("Input Monitoring permission revoked", "Grant access in System Settings → Privacy & Security → Input Monitoring.")
+            }
         default:
             return ("SayMoore error", String(describing: error))
         }

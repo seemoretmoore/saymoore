@@ -15,6 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let presets = PresetStore()
     private var presetWatcher: PresetWatcher?
     private var menuBar: MenuBarController?
+    private var micMonitor: MicrophonePermissionMonitor?
     private var bootstrap: ModelBootstrap?
     private var bootstrapWindow: ModelDownloadWindow?
     private let audioFeedback = AudioFeedbackService()
@@ -124,6 +125,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         hotkey.stop()
         presetWatcher?.stop()
+        micMonitor?.stop()
         Log.app.info("SayMoore terminating")
     }
 
@@ -327,6 +329,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NotificationCoordinator.shared.onBadgeChange = { [weak menuBar] badge in
             menuBar?.setBadge(badge)
         }
+        let mon = MicrophonePermissionMonitor(onRevoked: { [weak self] in
+            NotificationCoordinator.shared.notify(.permissionRevokedMidSession(.microphone))
+            self?.coordinator?.cancel()
+        })
+        mon.start()
+        self.micMonitor = mon
         Log.app.info("pipeline armed")
     }
 
