@@ -54,6 +54,14 @@ final class ModelBootstrap: ObservableObject {
             Log.model.info("bootstrap ready")
         } catch let err as SayMooreError {
             Log.model.error("bootstrap failed: \(String(describing: err), privacy: .public)")
+            if err == .modelCorrupted {
+                // Slice 9 Task C3: surface corruption to the menu bar so the
+                // persistent badge appears alongside the ModelDownloadWindow
+                // retry path. ModelDownloader has already scrubbed the bad
+                // file + sentinel, so the existing retry button restarts
+                // the download from byte 0.
+                NotificationCoordinator.shared.notify(.modelCorrupted)
+            }
             phase = .failed(err)
         } catch {
             Log.model.error("bootstrap failed: \(String(describing: error), privacy: .public)")
