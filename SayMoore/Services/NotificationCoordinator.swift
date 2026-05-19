@@ -25,13 +25,21 @@ final class NotificationCoordinator {
         case pasteFocusChanged, pasteClipboardContended, pasteInjectionFailed
         case silentCapture, recordingTooLong, recordingLengthWarning
 
-        var isPersistent: Bool {
+        var persistentBadgeLabel: String? {
             switch self {
-            case .ollamaUnreachable, .ollamaModelNotPulled, .ollamaEndpointUntrusted,
-                 .micPermissionDenied, .permissionRevoked, .modelCorrupted, .modelMissing:
-                return true
-            default:
-                return false
+            case .ollamaUnreachable: return "Ollama down"
+            case .ollamaModelNotPulled: return "Cleanup model missing"
+            case .ollamaEndpointUntrusted: return "Ollama endpoint untrusted"
+            case .micPermissionDenied: return "Mic blocked"
+            case .permissionRevoked(let p): return "Permission revoked: \(p.rawValue)"
+            case .modelCorrupted: return "Whisper model corrupted"
+            case .modelMissing: return "Whisper model missing"
+            case .audioEngineFailed, .diskFull, .watchdogTimeout,
+                 .transcriptionFailed, .transcriptionGarbage,
+                 .cleanupTimedOut, .cleanupFailed,
+                 .pasteFocusChanged, .pasteClipboardContended, .pasteInjectionFailed,
+                 .silentCapture, .recordingTooLong, .recordingLengthWarning:
+                return nil
             }
         }
     }
@@ -67,8 +75,8 @@ final class NotificationCoordinator {
             sink.send(title: title, body: body)
             lastSent[cls] = now()
         }
-        if cls.isPersistent {
-            badge = Badge(key: cls, label: Self.badgeLabel(for: cls))
+        if let label = cls.persistentBadgeLabel {
+            badge = Badge(key: cls, label: label)
         }
     }
 
@@ -108,16 +116,4 @@ final class NotificationCoordinator {
         }
     }
 
-    static func badgeLabel(for cls: ErrorClass) -> String {
-        switch cls {
-        case .ollamaUnreachable: return "Ollama down"
-        case .ollamaModelNotPulled: return "Cleanup model missing"
-        case .ollamaEndpointUntrusted: return "Ollama endpoint untrusted"
-        case .micPermissionDenied: return "Mic blocked"
-        case .permissionRevoked(let p): return "Permission revoked: \(p.rawValue)"
-        case .modelCorrupted: return "Whisper model corrupted"
-        case .modelMissing: return "Whisper model missing"
-        default: return "Error"
-        }
-    }
 }
