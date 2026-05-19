@@ -50,7 +50,10 @@ final class TranscriptTests: XCTestCase {
     func testIsGarbageForKnownHallucinationsEvenAtLowProb() {
         // Whisper sometimes emits stock phrases on silence with deceptively low
         // noSpeechProb — the denylist catches them regardless of prob.
-        for phrase in ["Thank you.", "thank you", "Thanks for watching.", "you", ".", "  Thank you.  "] {
+        for phrase in [
+            "Thank you.", "thank you", "Thanks for watching.", "you", ".", "  Thank you.  ",
+            "I'm sorry.", "I'm sorry", "  i'm sorry  ", "Sorry.",
+        ] {
             let r = Transcript.fromSegments([
                 TranscriptSegment(text: phrase, noSpeechProb: 0.10)
             ])
