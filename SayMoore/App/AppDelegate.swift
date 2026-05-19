@@ -274,6 +274,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     await MainActor.run { NotificationCoordinator.shared.notify(.ollamaModelNotPulled) }
                 }
             } catch let e as SayMooreError {
+                if case .ollamaUnreachable = e {
+                    let supervisor = await MainActor.run { OllamaSupervisor() }
+                    await supervisor.coldSpawn()
+                    try? await Task.sleep(for: .seconds(3))
+                    if let retryTags = try? await ollama.tags() {
+                        Log.cleanup.info("ollama up after cold-spawn, models=\(retryTags.joined(separator: ","), privacy: .public)")
+                        await MainActor.run { NotificationCoordinator.shared.clearBadge(for: .ollamaUnreachable) }
+                        if !retryTags.contains(where: { $0.hasPrefix("qwen2.5:7b-instruct") }) {
+                            await MainActor.run { NotificationCoordinator.shared.notify(.ollamaModelNotPulled) }
+                        }
+                        return
+                    }
+                }
                 await MainActor.run { NotificationCoordinator.shared.notify(e) }
             } catch {
                 Log.cleanup.error("ollama probe error: \(String(describing: error), privacy: .public)")
