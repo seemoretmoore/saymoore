@@ -218,6 +218,35 @@ final class PipelineCoordinatorTests: XCTestCase {
         _ = trans // silence unused
     }
 
+    // MARK: - Slice 6: busy-hotkey hook fires when toggle ignored
+
+    func testBusyHotkeyFiresWhenTogglePressedDuringTranscribing() async throws {
+        let (rec, _, _, _, fm, paste) = makeServices()
+        let blocking = BlockingTranscriptionService()
+        fm.bundleID = "com.apple.TextEdit"
+        let state = AppState()
+        let coord = PipelineCoordinator(
+            appState: state, recorder: rec,
+            transcription: blocking, paste: paste, presets: stubPresets
+        )
+        var busyCount = 0
+        coord.onBusyHotkey = { busyCount += 1 }
+
+        coord.toggle(bundleID: "com.apple.TextEdit") // .idle → .recording
+        coord.toggle(bundleID: nil)                  // .recording → kicks pipeline
+        try await Task.sleep(for: .milliseconds(20))
+        XCTAssertEqual(state.state, .transcribing)
+        XCTAssertEqual(busyCount, 0, "no busy fires for the legitimate start/stop pair")
+
+        // Toggle during transcribing — pipeline in flight, processingTask non-nil.
+        coord.toggle(bundleID: nil)
+        XCTAssertEqual(busyCount, 1, "busy must fire when toggle hits the processingTask-in-flight guard")
+
+        blocking.resume(.success(Transcript(text: "hello", averageNoSpeechProb: 0)))
+        try await Task.sleep(for: .milliseconds(50))
+        XCTAssertEqual(state.state, .idle)
+    }
+
     // MARK: - C1: Triple-tap deduplication
 
     func testTripleTapOnlyRunsOnePipeline() async throws {
@@ -484,6 +513,99 @@ final class PipelineCoordinatorTests: XCTestCase {
 
         XCTAssertEqual(rec.stopCalls, 1, "VAD silence threshold should auto-stop the recorder")
         XCTAssertEqual(state.state, .idle, "pipeline should reach idle after VAD auto-stop")
+    }
+
+    // MARK: - Slice 6: length-cap colour pill phase
+
+    private final class PhaseRecorder {
+        private(set) var phases: [PipelineCoordinator.LengthCapPhase] = []
+        func record(_ p: PipelineCoordinator.LengthCapPhase) { phases.append(p) }
+    }
+
+    func testLengthCapPhase_FiresNormalImmediatelyOnRecord() async throws {
+        let (rec, trans, _, _, fm, paste) = makeServices()
+        fm.bundleID = "com.apple.TextEdit"
+        let state = AppState()
+        let phases = PhaseRecorder()
+        let coord = PipelineCoordinator(
+            appState: state, recorder: rec,
+            transcription: trans, paste: paste, presets: stubPresets,
+            lengthCapCaution: 5.0, lengthCapWarning: 5.5, lengthCapHardStop: 6.0
+        )
+        coord.onLengthCapPhase = { phases.record($0) }
+
+        coord.toggle(bundleID: "com.apple.TextEdit")
+        XCTAssertEqual(state.state, .recording)
+        XCTAssertTrue(phases.phases.contains(.normal),
+                      "phase .normal must fire immediately on record start; got \(phases.phases)")
+
+        coord.toggle(bundleID: nil)
+        try await Task.sleep(for: .milliseconds(80))
+    }
+
+    func testLengthCapPhase_FiresCautionAtThreshold() async throws {
+        let (rec, trans, _, _, fm, paste) = makeServices()
+        fm.bundleID = "com.apple.TextEdit"
+        let state = AppState()
+        let phases = PhaseRecorder()
+        let coord = PipelineCoordinator(
+            appState: state, recorder: rec,
+            transcription: trans, paste: paste, presets: stubPresets,
+            lengthCapCaution: 0.05, lengthCapWarning: 5.0, lengthCapHardStop: 6.0
+        )
+        coord.onLengthCapPhase = { phases.record($0) }
+
+        coord.toggle(bundleID: "com.apple.TextEdit")
+        try await Task.sleep(for: .milliseconds(120))
+        XCTAssertTrue(phases.phases.contains(.caution),
+                      "phase .caution must fire after lengthCapCaution; got \(phases.phases)")
+
+        coord.toggle(bundleID: nil)
+        try await Task.sleep(for: .milliseconds(80))
+    }
+
+    func testLengthCapPhase_FiresWarningAlongsideBanner() async throws {
+        let (rec, trans, _, _, fm, paste) = makeServices()
+        fm.bundleID = "com.apple.TextEdit"
+        let state = AppState()
+        let fallbacks = FallbackRecorder()
+        let phases = PhaseRecorder()
+        let coord = PipelineCoordinator(
+            appState: state, recorder: rec,
+            transcription: trans, paste: paste, presets: stubPresets,
+            lengthCapCaution: 0.02, lengthCapWarning: 0.05, lengthCapHardStop: 5.0,
+            onFallback: { fallbacks.record($0) }
+        )
+        coord.onLengthCapPhase = { phases.record($0) }
+
+        coord.toggle(bundleID: "com.apple.TextEdit")
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertTrue(phases.phases.contains(.warning),
+                      "phase .warning must fire at lengthCapWarning; got \(phases.phases)")
+        XCTAssertTrue(fallbacks.contains(.recordingLengthWarning),
+                      "warning banner must still fire alongside .warning phase")
+
+        coord.toggle(bundleID: nil)
+        try await Task.sleep(for: .milliseconds(80))
+    }
+
+    func testLengthCapPhase_FiresIdleOnCancel() async throws {
+        let (rec, trans, _, _, fm, paste) = makeServices()
+        fm.bundleID = "com.apple.TextEdit"
+        let state = AppState()
+        let phases = PhaseRecorder()
+        let coord = PipelineCoordinator(
+            appState: state, recorder: rec,
+            transcription: trans, paste: paste, presets: stubPresets,
+            lengthCapCaution: 5.0, lengthCapWarning: 5.5, lengthCapHardStop: 6.0
+        )
+        coord.onLengthCapPhase = { phases.record($0) }
+
+        coord.toggle(bundleID: "com.apple.TextEdit")
+        coord.cancel()
+        XCTAssertEqual(state.state, .idle)
+        XCTAssertTrue(phases.phases.last == .idle,
+                      "phase .idle must be the last fired after cancel; got \(phases.phases)")
     }
 }
 

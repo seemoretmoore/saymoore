@@ -250,6 +250,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         appState.onTransition = { [audioFeedback] old, new in
             audioFeedback.handle(old: old, new: new)
         }
+        coordinator?.onBusyHotkey = { [audioFeedback] in
+            audioFeedback.busy()
+        }
+        coordinator?.onLengthCapPhase = { [weak menuBar] phase in
+            menuBar?.setPhase(phase)
+        }
 
         hotkey.isRecording = { [weak self] in
             self?.appState.state == .recording
