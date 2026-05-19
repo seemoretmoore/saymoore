@@ -25,7 +25,7 @@ final class HotkeyServiceTests: XCTestCase {
         // ctrlDown→ctrlUp→ctrlDown sequence behaves as if starting from zero.
         // (No toggle fired = recognizer was truly reset.)
         var toggleFired = false
-        svc.onToggle = { _ in toggleFired = true }
+        svc.onToggle = { _, _ in toggleFired = true }
 
         _ = ProcessInfo.processInfo.systemUptime
         // Simulate: one ctrlDown arrives right after reset — should NOT toggle.
@@ -43,7 +43,7 @@ final class HotkeyServiceTests: XCTestCase {
     func testSentinelEventPassesThrough() {
         let svc = HotkeyService()
         var toggleFired = false
-        svc.onToggle = { _ in toggleFired = true }
+        svc.onToggle = { _, _ in toggleFired = true }
 
         let src = CGEventSource(stateID: .combinedSessionState)
         guard let e = CGEvent(source: src) else {
@@ -79,7 +79,7 @@ final class HotkeyServiceTests: XCTestCase {
         // pendingBundleID must still be set — verify by confirming toggle fires
         // after the second ctrl-tap (ctrl-up then ctrl-down).
         var toggleBundleID: String? = "sentinel-not-fired"
-        svc.onToggle = { id in toggleBundleID = id }
+        svc.onToggle = { id, _ in toggleBundleID = id }
 
         guard let ctrlUp = CGEvent(source: src) else { XCTFail(); return }
         ctrlUp.type = .flagsChanged

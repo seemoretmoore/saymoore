@@ -18,6 +18,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var bootstrap: ModelBootstrap?
     private var bootstrapWindow: ModelDownloadWindow?
     private let audioFeedback = AudioFeedbackService()
+    private let hud = RecordingHUDController()
+    private let cursorIndicator = CursorIndicatorController()
+    private var lastBundleID: String?
+    private var lastCursorPoint: NSPoint = .zero
     /// Set to true when the Ollama endpoint trust probe returns `.untrustedEndpoint`.
     /// PipelineCoordinator checks this flag before starting a recording.
     var ollamaEndpointBlocked = false
@@ -247,8 +251,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
-        appState.onTransition = { [audioFeedback] old, new in
+        appState.onTransition = { [audioFeedback, hud, cursorIndicator, weak self] old, new in
             audioFeedback.handle(old: old, new: new)
+            switch (old, new) {
+            case (.idle, .recording):
+                let label = PresetDisplayName.resolve(bundleID: self?.lastBundleID)
+                hud.show(preset: label)
+                cursorIndicator.show(at: self?.lastCursorPoint ?? .zero)
+            case (.recording, _):
+                hud.hide()
+                cursorIndicator.hide()
+            default:
+                break
+            }
         }
         coordinator?.onBusyHotkey = { [audioFeedback] in
             audioFeedback.busy()
@@ -260,7 +275,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hotkey.isRecording = { [weak self] in
             self?.appState.state == .recording
         }
-        hotkey.onToggle = { [weak self] bundleID in
+        hotkey.onToggle = { [weak self] bundleID, cursorPoint in
+            self?.lastBundleID = bundleID
+            self?.lastCursorPoint = cursorPoint
             self?.coordinator?.toggle(bundleID: bundleID)
         }
         hotkey.onCancel = { [weak self] in
