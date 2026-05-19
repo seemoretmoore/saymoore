@@ -15,6 +15,7 @@ final class MenuBarController: NSObject {
     private var pulseDim: Bool = false
     private var recordingStartedAt: Date?
     private var phase: PipelineCoordinator.LengthCapPhase = .idle
+    private var badge: NotificationCoordinator.Badge?
 
     init(appState: AppState, presets: PresetStore) {
         self.appState = appState
@@ -95,9 +96,16 @@ final class MenuBarController: NSObject {
         refreshIcon()
     }
 
+    func setBadge(_ badge: NotificationCoordinator.Badge?) {
+        guard self.badge != badge else { return }
+        self.badge = badge
+        refreshIcon()
+        titleItem.title = Self.titleString(for: appState.state, badge: badge)
+    }
+
     private func apply(_ state: AppState.State) {
         refreshIcon()
-        titleItem.title = "SayMoore (\(Self.label(for: state)))"
+        titleItem.title = Self.titleString(for: state, badge: badge)
         if state == .recording {
             startPulse()
         } else {
@@ -114,6 +122,11 @@ final class MenuBarController: NSObject {
         // Title is baked into the pill image during recording; clear the
         // status-item title slot so it doesn't render twice.
         button.title = ""
+        button.toolTip = badge?.label ?? "SayMoore"
+    }
+
+    private static func titleString(for state: AppState.State, badge: NotificationCoordinator.Badge?) -> String {
+        "SayMoore (\(label(for: state)))" + (badge.map { " — ⚠︎ \($0.label)" } ?? "")
     }
 
     private func startPulse() {
