@@ -93,6 +93,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        switch appState.state {
+        case .idle, .error:
+            return .terminateNow
+        case .recording:
+            let alert = NSAlert()
+            alert.messageText = "Discard current dictation and quit?"
+            alert.informativeText = "Recording will be discarded."
+            alert.addButton(withTitle: "Discard & Quit")
+            alert.addButton(withTitle: "Cancel")
+            let resp = alert.runModal()
+            if resp == .alertFirstButtonReturn {
+                coordinator?.cancel()
+                return .terminateNow
+            }
+            return .terminateCancel
+        case .transcribing, .cleaning, .pasting:
+            Task { @MainActor in
+                let deadline = Date().addingTimeInterval(5)
+                while Date() < deadline && self.appState.state != .idle {
+                    try? await Task.sleep(for: .milliseconds(100))
+                }
+                sender.reply(toApplicationShouldTerminate: true)
+            }
+            return .terminateLater
+        }
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         hotkey.stop()
         presetWatcher?.stop()
