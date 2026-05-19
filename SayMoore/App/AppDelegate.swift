@@ -78,7 +78,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             case .untrustedEndpoint:
                 ollamaEndpointBlocked = true
                 coordinator?.blocked = true
-                NotificationCenterAdapter.shared.notify(.ollamaEndpointUntrusted)
+                NotificationCoordinator.shared.notify(.ollamaEndpointUntrusted)
                 Log.app.error("ollama endpoint trust probe: untrusted — dictation blocked")
             case .probeFailed(let error):
                 // M2: fail-closed — treat verification failure as blocking.
@@ -201,7 +201,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let ollama = OllamaService()
         let cleanup = CleanupService(client: ollama, presets: presets)
-        let notifier = NotificationCenterAdapter.shared
 
         // Slice 5: Silero VAD. If the model file fails to load, log and continue
         // without VAD — the 90s length-cap timer is still armed by PipelineCoordinator.
@@ -229,7 +228,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             cleanup: cleanup,
             recordingsDir: Self.recordingsDirIfPossible(),
             vadService: vadService,
-            onFallback: { error in notifier.notify(error) }
+            onFallback: { error in NotificationCoordinator.shared.notify(error) }
         )
         // C1: stamp blocked flag immediately so probe results that landed before
         // coordinator was created are not silently lost.
@@ -242,10 +241,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 let tags = try await ollama.tags()
                 Log.cleanup.info("ollama up, models=\(tags.joined(separator: ","), privacy: .public)")
                 if !tags.contains(where: { $0.hasPrefix("qwen2.5:7b-instruct") }) {
-                    await MainActor.run { notifier.notify(.ollamaModelNotPulled) }
+                    await MainActor.run { NotificationCoordinator.shared.notify(.ollamaModelNotPulled) }
                 }
             } catch let e as SayMooreError {
-                await MainActor.run { notifier.notify(e) }
+                await MainActor.run { NotificationCoordinator.shared.notify(e) }
             } catch {
                 Log.cleanup.error("ollama probe error: \(String(describing: error), privacy: .public)")
             }
