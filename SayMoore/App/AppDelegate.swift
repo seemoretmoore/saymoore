@@ -293,6 +293,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.presetWatcher = watcher
 
         hotkey.start()
+        NotificationCoordinator.shared.onBadgeChange = { [weak menuBar] badge in
+            menuBar?.setBadge(badge)
+        }
         Log.app.info("pipeline armed")
     }
 
