@@ -7,6 +7,11 @@ options:
   generateEmptyDirectories: true
   defaultConfig: Release
 
+packages:
+  onnxruntime:
+    url: https://github.com/microsoft/onnxruntime-swift-package-manager
+    from: "1.20.0"
+
 settings:
   base:
     SWIFT_VERSION: "5.10"
@@ -55,6 +60,8 @@ targets:
       - framework: Vendor/whisper.xcframework
         embed: true
         codeSign: true
+      - package: onnxruntime
+        product: onnxruntime
     postBuildScripts:
       - name: Assert non-adhoc signing
         basedOnDependencyAnalysis: false

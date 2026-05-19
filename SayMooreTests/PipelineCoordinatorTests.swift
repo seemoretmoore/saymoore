@@ -6,6 +6,7 @@ final class PipelineCoordinatorTests: XCTestCase {
 
     private final class FakeRecorder: AudioRecording {
         var isRecording: Bool = false
+        var vadService: VADService?
         var samples: [Float] = Array(repeating: 0.5, count: 16_000)
         var startError: Error?
         var stopError: Error?
@@ -354,6 +355,145 @@ final class PipelineCoordinatorTests: XCTestCase {
         XCTAssertEqual(state.state, .idle)
         XCTAssertEqual(rec.stopCalls, 2, "two full cycles = two stop calls")
     }
+
+    // MARK: - Slice 5: length cap timers + VAD auto-stop
+
+    func testLengthCapWarningFiresWhileRecording() async throws {
+        let (rec, trans, _, _, fm, paste) = makeServices()
+        fm.bundleID = "com.apple.TextEdit"
+        let state = AppState()
+        let fallbacks = FallbackRecorder()
+        let coord = PipelineCoordinator(
+            appState: state, recorder: rec,
+            transcription: trans, paste: paste, presets: stubPresets,
+            lengthCapWarning: 0.05, lengthCapHardStop: 5.0,
+            onFallback: { fallbacks.record($0) }
+        )
+
+        coord.toggle(bundleID: "com.apple.TextEdit")
+        XCTAssertEqual(state.state, .recording)
+
+        try await Task.sleep(for: .milliseconds(120))
+        XCTAssertTrue(fallbacks.contains(.recordingLengthWarning),
+                      "warning should fire after lengthCapWarning elapsed; got \(fallbacks.snapshot())")
+        // Hard stop hasn't elapsed yet — still recording.
+        XCTAssertEqual(state.state, .recording)
+
+        // Clean shutdown via normal toggle.
+        coord.toggle(bundleID: nil)
+        try await Task.sleep(for: .milliseconds(80))
+    }
+
+    func testLengthCapHardStopForcesStop() async throws {
+        let (rec, trans, _, _, fm, paste) = makeServices()
+        fm.bundleID = "com.apple.TextEdit"
+        let state = AppState()
+        let fallbacks = FallbackRecorder()
+        let coord = PipelineCoordinator(
+            appState: state, recorder: rec,
+            transcription: trans, paste: paste, presets: stubPresets,
+            lengthCapWarning: 5.0, lengthCapHardStop: 0.05,
+            onFallback: { fallbacks.record($0) }
+        )
+
+        coord.toggle(bundleID: "com.apple.TextEdit")
+        XCTAssertEqual(state.state, .recording)
+
+        try await Task.sleep(for: .milliseconds(200))
+        // Hard stop should have fired: recorder.stop called, banner posted.
+        XCTAssertEqual(rec.stopCalls, 1, "hard cap should auto-stop the recorder")
+        XCTAssertTrue(fallbacks.contains(.recordingTooLong),
+                      "hard stop should post recordingTooLong banner; got \(fallbacks.snapshot())")
+        XCTAssertEqual(state.state, .idle, "pipeline should progress to idle after auto-stop")
+    }
+
+    func testManualStopCancelsLengthCapTimers() async throws {
+        let (rec, trans, _, _, fm, paste) = makeServices()
+        fm.bundleID = "com.apple.TextEdit"
+        let state = AppState()
+        let fallbacks = FallbackRecorder()
+        let coord = PipelineCoordinator(
+            appState: state, recorder: rec,
+            transcription: trans, paste: paste, presets: stubPresets,
+            lengthCapWarning: 0.30, lengthCapHardStop: 0.40,
+            onFallback: { fallbacks.record($0) }
+        )
+
+        coord.toggle(bundleID: "com.apple.TextEdit")
+        // Stop well before warning fires.
+        try await Task.sleep(for: .milliseconds(20))
+        coord.toggle(bundleID: nil)
+        try await Task.sleep(for: .milliseconds(500))
+
+        XCTAssertFalse(fallbacks.contains(.recordingLengthWarning),
+                       "manual stop must cancel the warning timer")
+        XCTAssertFalse(fallbacks.contains(.recordingTooLong),
+                       "manual stop must cancel the hard-stop timer")
+        XCTAssertEqual(rec.stopCalls, 1, "single stop from the manual toggle, not from hard cap")
+    }
+
+    func testEscCancelCancelsLengthCapTimers() async throws {
+        let (rec, trans, _, _, fm, paste) = makeServices()
+        fm.bundleID = "com.apple.TextEdit"
+        let state = AppState()
+        let fallbacks = FallbackRecorder()
+        let coord = PipelineCoordinator(
+            appState: state, recorder: rec,
+            transcription: trans, paste: paste, presets: stubPresets,
+            lengthCapWarning: 0.30, lengthCapHardStop: 0.40,
+            onFallback: { fallbacks.record($0) }
+        )
+
+        coord.toggle(bundleID: "com.apple.TextEdit")
+        try await Task.sleep(for: .milliseconds(20))
+        coord.cancel()
+        try await Task.sleep(for: .milliseconds(500))
+
+        XCTAssertFalse(fallbacks.contains(.recordingLengthWarning))
+        XCTAssertFalse(fallbacks.contains(.recordingTooLong))
+        XCTAssertEqual(rec.cancelCalls, 1)
+    }
+
+    func testVADSilenceAutoStopsRecording() async throws {
+        let (rec, trans, _, _, fm, paste) = makeServices()
+        fm.bundleID = "com.apple.TextEdit"
+        let state = AppState()
+
+        // Build a VAD service with a Fake backend that classifies every frame
+        // as silence and a tiny threshold so the observer fires quickly.
+        let backend = FakeVADBackend(canned: [.silence])
+        let vad = VADService(
+            backend: backend,
+            silenceThreshold: 5 * VADService.frameDuration
+        )
+
+        let coord = PipelineCoordinator(
+            appState: state, recorder: rec,
+            transcription: trans, paste: paste, presets: stubPresets,
+            vadService: vad,
+            lengthCapWarning: 10.0, lengthCapHardStop: 20.0
+        )
+
+        coord.toggle(bundleID: "com.apple.TextEdit")
+        XCTAssertEqual(state.state, .recording)
+        XCTAssertNotNil(rec.vadService, "VAD should be attached to recorder on init")
+
+        // Manually feed enough silence frames to cross the threshold.
+        vad.feed(Array(repeating: Float(0), count: 20 * VADService.frameSamples))
+        try await Task.sleep(for: .milliseconds(150))
+
+        XCTAssertEqual(rec.stopCalls, 1, "VAD silence threshold should auto-stop the recorder")
+        XCTAssertEqual(state.state, .idle, "pipeline should reach idle after VAD auto-stop")
+    }
+}
+
+/// Records onFallback callbacks for assertions across timer tests.
+@MainActor
+private final class FallbackRecorder {
+    private var calls: [SayMooreError] = []
+    func record(_ e: SayMooreError) { calls.append(e) }
+    func contains(_ e: SayMooreError) -> Bool { calls.contains(e) }
+    func snapshot() -> [SayMooreError] { calls }
 }
 
 @MainActor

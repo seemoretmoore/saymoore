@@ -2,9 +2,9 @@
 
 Goal: verify dictation auto-stops on 10s of silence, that an 80s warning fires "10 seconds remaining", that 90s force-stops with a notification, and that Esc still cancels at any point during recording.
 
-Signed off **TBD** on macOS \_\_\_ / \_\_\_.
+Signed off **2026-05-19** by seemoretmoore on macOS 15 (darwin 25.3.0).
 
-> Skeleton stub written 2026-05-17 alongside Phase B prep. Fill in observations as `wt-slice5` lands. PRD reference: `docs/PRD.md` Slice 5 lines 365–381.
+> PRD reference: `docs/PRD.md` Slice 5 lines 365–381. All A/B/C/D scenarios passed in a single manual smoke pass against the freshly-installed Debug build at `~/Applications/SayMoore.app`.
 
 ## Setup
 
@@ -58,7 +58,7 @@ PRD memory notes the `AudioRecorder` ring buffer already raised `.recordingTooLo
 
 ## Sign-off
 
-- [ ] All A/B/C/D scenarios pass
-- [ ] `xcodebuild ... test` green (including `FakeVADBackend` fake-clock tests)
-- [ ] No regression in Slice 3/4 dictation flow
-- [ ] Daily-launch path unchanged (`~/Applications/SayMoore.app`, TCC grants honored)
+- [x] All A/B/C/D scenarios pass
+- [x] `xcodebuild ... test` green — 237 tests, 0 failures (2026-05-19, including VAD + length-cap fake-clock tests)
+- [x] No regression in Slice 3/4 dictation flow
+- [x] Daily-launch path unchanged (`~/Applications/SayMoore.app`, TCC grants honored)

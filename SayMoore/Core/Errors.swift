@@ -17,6 +17,7 @@ enum SayMooreError: Error {
     case diskFull
     case watchdogTimeout
     case recordingTooLong
+    case recordingLengthWarning
     case silentCapture
     case ollamaEndpointUntrusted
 
@@ -63,6 +64,7 @@ extension SayMooreError: Equatable {
         case .silentCapture: return 16
         case .permissionRevokedMidSession: return 17
         case .ollamaEndpointUntrusted: return 18
+        case .recordingLengthWarning: return 19
         }
     }
 
