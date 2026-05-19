@@ -267,6 +267,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         coordinator?.onBusyHotkey = { [audioFeedback] in
             audioFeedback.busy()
         }
+        recorder.onDeviceChange = { [weak coordinator = self.coordinator] in
+            coordinator?.handleAudioDeviceChange()
+        }
         coordinator?.onLengthCapPhase = { [weak menuBar] phase in
             menuBar?.setPhase(phase)
         }

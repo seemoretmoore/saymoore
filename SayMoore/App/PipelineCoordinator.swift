@@ -166,6 +166,21 @@ final class PipelineCoordinator {
         }
     }
 
+    /// Invoked by AudioRecorder.onDeviceChange when AVAudioEngine posted a
+    /// configurationChangeNotification mid-recording. The recorder has already
+    /// stopped itself; we surface the abort to the user and reset state.
+    func handleAudioDeviceChange() {
+        guard appState.state == .recording else { return }
+        Log.pipeline.error("audio device changed mid-recording")
+        cancelLengthCapTimers()
+        cancelWatchdog()
+        capturedBundleID = nil
+        let err = SayMooreError.audioEngineFailed(underlying: AudioRecorder.RecorderError.deviceChanged)
+        onFallback?(err)
+        appState.transition(to: .error(err))
+        appState.transition(to: .idle)
+    }
+
     func cancel() {
         guard appState.state == .recording else { return }
         recorder.cancel()

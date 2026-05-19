@@ -25,10 +25,29 @@ final class AudioRecorder {
     // its own worker queue. Set this BEFORE start(); reset is handled here.
     var vadService: VADService?
 
+    /// Fired (on the main actor) when AVAudioEngine posts a
+    /// configurationChangeNotification while we're mid-recording. The recorder
+    /// has already stopped itself by the time this fires — the handler is
+    /// responsible for surfacing the abort to the rest of the pipeline.
+    var onDeviceChange: (@MainActor () -> Void)?
+    nonisolated(unsafe) private var configChangeObserver: NSObjectProtocol?
+
+    /// Test-only accessor: the AVAudioEngine the recorder observes for
+    /// configuration-change notifications. Tests post a notification with this
+    /// engine as `object` so the observer (filtered on the same engine) fires.
+    var engineForObserverTesting: AVAudioEngine { engine }
+
+    deinit {
+        if let obs = configChangeObserver {
+            NotificationCenter.default.removeObserver(obs)
+        }
+    }
+
     func start() throws {
         guard !isRecording else { return }
         ringBuffer.reset()
         vadService?.reset()
+        setupConfigChangeObserverIfNeeded()
 
         let input = engine.inputNode
         let inputFormat = input.outputFormat(forBus: 0)
@@ -134,6 +153,23 @@ final class AudioRecorder {
     enum RecorderError: Error {
         case invalidInputFormat
         case notRecording
+        case deviceChanged
+    }
+
+    private func setupConfigChangeObserverIfNeeded() {
+        guard configChangeObserver == nil else { return }
+        configChangeObserver = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange,
+            object: engine,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.isRecording else { return }
+                Log.audio.error("AVAudioEngine configurationChange during recording — aborting")
+                _ = try? self.stop()
+                self.onDeviceChange?()
+            }
+        }
     }
 
     // Test-only: mark as recording without starting the engine.
