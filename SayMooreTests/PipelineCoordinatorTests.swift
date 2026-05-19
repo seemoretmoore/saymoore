@@ -218,6 +218,35 @@ final class PipelineCoordinatorTests: XCTestCase {
         _ = trans // silence unused
     }
 
+    // MARK: - Slice 6: busy-hotkey hook fires when toggle ignored
+
+    func testBusyHotkeyFiresWhenTogglePressedDuringTranscribing() async throws {
+        let (rec, _, _, _, fm, paste) = makeServices()
+        let blocking = BlockingTranscriptionService()
+        fm.bundleID = "com.apple.TextEdit"
+        let state = AppState()
+        let coord = PipelineCoordinator(
+            appState: state, recorder: rec,
+            transcription: blocking, paste: paste, presets: stubPresets
+        )
+        var busyCount = 0
+        coord.onBusyHotkey = { busyCount += 1 }
+
+        coord.toggle(bundleID: "com.apple.TextEdit") // .idle → .recording
+        coord.toggle(bundleID: nil)                  // .recording → kicks pipeline
+        try await Task.sleep(for: .milliseconds(20))
+        XCTAssertEqual(state.state, .transcribing)
+        XCTAssertEqual(busyCount, 0, "no busy fires for the legitimate start/stop pair")
+
+        // Toggle during transcribing — pipeline in flight, processingTask non-nil.
+        coord.toggle(bundleID: nil)
+        XCTAssertEqual(busyCount, 1, "busy must fire when toggle hits the processingTask-in-flight guard")
+
+        blocking.resume(.success(Transcript(text: "hello", averageNoSpeechProb: 0)))
+        try await Task.sleep(for: .milliseconds(50))
+        XCTAssertEqual(state.state, .idle)
+    }
+
     // MARK: - C1: Triple-tap deduplication
 
     func testTripleTapOnlyRunsOnePipeline() async throws {

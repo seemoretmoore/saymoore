@@ -3,11 +3,18 @@ import Combine
 
 @MainActor
 final class MenuBarController: NSObject {
+    /// Period of one pulse half-cycle (alpha alternation interval).
+    static let pulseInterval: TimeInterval = 0.7
+    /// Dim alpha used during the low half of the pulse.
+    static let pulseDimAlpha: CGFloat = 0.45
+
     private let statusItem: NSStatusItem
     private let appState: AppState
     private let presets: PresetStore
     private let titleItem: NSMenuItem
     private var cancellables: Set<AnyCancellable> = []
+    private var pulseTimer: Timer?
+    private var pulseDim: Bool = false
 
     init(appState: AppState, presets: PresetStore) {
         self.appState = appState
@@ -82,7 +89,38 @@ final class MenuBarController: NSObject {
         statusItem.button?.image = Self.image(for: state)
         statusItem.button?.image?.isTemplate = true
         titleItem.title = "SayMoore (\(Self.label(for: state)))"
+        if state == .recording {
+            startPulse()
+        } else {
+            stopPulse()
+        }
     }
+
+    private func startPulse() {
+        guard pulseTimer == nil else { return }
+        pulseDim = false
+        // .common so the pulse keeps ticking while the user has the menu open.
+        let timer = Timer(timeInterval: Self.pulseInterval, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.tickPulse()
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        pulseTimer = timer
+    }
+
+    private func stopPulse() {
+        pulseTimer?.invalidate()
+        pulseTimer = nil
+        pulseDim = false
+        statusItem.button?.alphaValue = 1.0
+    }
+
+    private func tickPulse() {
+        pulseDim.toggle()
+        statusItem.button?.alphaValue = pulseDim ? Self.pulseDimAlpha : 1.0
+    }
+
 
     private static func image(for state: AppState.State) -> NSImage? {
         switch state {

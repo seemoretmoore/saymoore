@@ -2,9 +2,9 @@
 
 Goal: verify multi-channel recording feedback — menu icon pulse, cursor indicator at press position, borderless HUD on active display with per-preset label, ping/stop/cancel/busy sounds — and that the HUD is non-intrusive (no focus steal, no click blocking, absent from screenshots).
 
-Signed off **TBD** on macOS \_\_\_ / \_\_\_.
+> **Bundle A (2026-05-19): sounds + menu-bar pulse only.** Parts marked **[Bundle A]** are in scope; parts marked **[deferred to Bundle B]** cover HUD window + cursor indicator and are not implemented yet. PRD reference: `docs/PRD.md` Slice 6 lines 383–403.
 
-> Skeleton stub written 2026-05-17 alongside Phase B prep. Fill in observations as `wt-slice6` lands. PRD reference: `docs/PRD.md` Slice 6 lines 383–403. Audio chimes already shipped via `AudioFeedbackService`; this slice adds the visual layer.
+Signed off **TBD** on macOS \_\_\_ / \_\_\_.
 
 ## Setup
 
@@ -18,19 +18,19 @@ Required:
 - Screenshot tool (Cmd-Shift-4) ready for Part E.
 - `presets.json` materialized with the bundled Slack/BBEdit/Notes/Messages overrides (verify per-preset HUD label).
 
-## Part A — Recording start feedback
+## Part A — Recording start feedback **[Bundle A]**
 
 Trigger: Ctrl-Ctrl with frontmost = TextEdit (default preset).
 
 | # | Channel | Expected | Actual | Pass |
 |---|---|---|---|---|
-| A1 | Sound | `start.aiff` ping plays | | |
-| A2 | Menu bar | Icon pulses (subtle scale or opacity oscillation) | | |
-| A3 | Cursor indicator | Static dot appears at the cursor position *at hotkey-press time* (does NOT follow cursor) | | |
-| A4 | HUD | Borderless window fades in over ~80ms on active display, shows "● Recording — default" below dot | | |
-| A5 | HUD label collapse | After ~1.2s, label collapses to just the "●" dot | | |
+| A1 | Sound | Glass chime plays once on start | | |
+| A2 | Menu bar | Icon visibly pulses (alpha alternates ~1.0 ↔ 0.45 every ~700 ms) while in `.recording` | | |
+| A3 | Cursor indicator | **[deferred to Bundle B]** | n/a | n/a |
+| A4 | HUD | **[deferred to Bundle B]** | n/a | n/a |
+| A5 | HUD label collapse | **[deferred to Bundle B]** | n/a | n/a |
 
-## Part B — Per-preset HUD label
+## Part B — Per-preset HUD label **[deferred to Bundle B]**
 
 | # | App (frontmost) | Bundle ID | Expected HUD label | Actual | Pass |
 |---|---|---|---|---|---|
@@ -40,15 +40,16 @@ Trigger: Ctrl-Ctrl with frontmost = TextEdit (default preset).
 | B4 | Messages | `com.apple.MobileSMS` | `● Recording — Messages preset` | | |
 | B5 | Safari (no override) | `com.apple.Safari` | `● Recording — default` | | |
 
-## Part C — Stop / cancel / busy
+## Part C — Stop / cancel / busy **[Bundle A]**
 
 | # | Trigger | Expected | Actual | Pass |
 |---|---|---|---|---|
-| C1 | Ctrl-Ctrl again (stop) | `stop.aiff` plays; menu icon settles; cursor + HUD fade out | | |
-| C2 | Esc during recording (cancel) | `cancel.aiff` plays; indicators fade; NO paste | | |
-| C3 | Re-press Ctrl-Ctrl during `transcribing` state (busy) | `busy.aiff` plays; HUD remains in transcribing state; no new recording starts | | |
+| C1 | Ctrl-Ctrl again (stop) | Pop chime plays; menu icon pulse stops, alpha returns to 1.0 | | |
+| C2 | Esc during recording (cancel) | Funk chime plays (distinct from Pop); pulse stops; NO paste | | |
+| C3 | Re-press Ctrl-Ctrl during `transcribing` state (busy) | Sosumi chime plays; no new recording starts; pipeline continues | | |
+| C4 | Re-press Ctrl-Ctrl during `cleaning` / `pasting` state (busy) | Sosumi chime plays; pipeline continues | | |
 
-## Part D — Active-display + fullscreen
+## Part D — Active-display + fullscreen **[deferred to Bundle B]**
 
 Setup: open Xcode fullscreen on the **external** display; menu bar lives on the **laptop** display.
 
@@ -58,7 +59,7 @@ Setup: open Xcode fullscreen on the **external** display; menu bar lives on the 
 | D2 | HUD visibility above fullscreen | HUD renders above Xcode's fullscreen via `.canJoinAllSpaces` + `.fullScreenAuxiliary` | | |
 | D3 | Active app on laptop (non-fullscreen) | HUD appears on laptop display | | |
 
-## Part E — Non-intrusive guarantees
+## Part E — Non-intrusive guarantees **[deferred to Bundle B]**
 
 | # | Property | Test | Expected | Actual | Pass |
 |---|---|---|---|---|---|
@@ -67,16 +68,18 @@ Setup: open Xcode fullscreen on the **external** display; menu bar lives on the 
 | E3 | Absent from screenshots | Cmd-Shift-4, select HUD region | Screenshot does NOT contain the HUD (`sharingType` exclusion) | | |
 | E4 | No dock/cmd-tab presence | Cmd-Tab during recording | SayMoore not listed (or listed only as expected per existing behavior) | | |
 
-## Part F — Sound mute interaction
+## Part F — Sound mute interaction **[Bundle A]**
 
-`AudioFeedbackService.muted` defaulted to false. With `defaults write com.seemoretmoore.saymoore audio.feedback.muted -bool true`:
+`AudioFeedbackService.muted` defaulted to false. With `defaults write com.seemoretmoore.saymoore audio.feedback.muted -bool true` then relaunch (mute is read once at init):
 
 | # | Scenario | Expected | Actual | Pass |
 |---|---|---|---|---|
-| F1 | Muted recording start | No `start.aiff`; visual indicators (pulse + cursor + HUD) still appear | | |
-| F2 | Muted stop | No `stop.aiff`; visuals fade | | |
+| F1 | Muted recording start | No Glass chime; menu-bar icon still pulses | | |
+| F2 | Muted stop | No Pop chime; pulse stops | | |
+| F3 | Muted Esc cancel | No Funk chime; pulse stops; no paste | | |
+| F4 | Muted busy press | No Sosumi chime; pipeline continues | | |
 
-(Confirms visuals are independent of the audio mute toggle.)
+(Confirms the pulse is independent of the audio mute toggle.)
 
 ## Observations / regressions
 
@@ -84,7 +87,16 @@ Setup: open Xcode fullscreen on the **external** display; menu bar lives on the 
 
 ## Sign-off
 
-- [ ] All A–F scenarios pass
-- [ ] `xcodebuild ... test` green (including `MenuBarController` icon-state snapshot tests)
+### Bundle A (this PR)
+
+- [ ] All Bundle-A rows in Parts A / C / F pass (sounds + pulse only)
+- [ ] `xcodebuild ... test` green (AudioFeedbackServiceTests + PipelineCoordinatorTests busy-hook)
 - [ ] No regression in chime timing (Slice 6 minimal-subset shipped 2026-05-14)
 - [ ] No regression in Slice 4 per-preset resolution
+
+### Bundle B (deferred)
+
+- [ ] Parts A3–A5 (cursor indicator + HUD window + label collapse)
+- [ ] Part B (per-preset HUD label)
+- [ ] Part D (active-display + fullscreen)
+- [ ] Part E (non-intrusive guarantees)

@@ -32,6 +32,13 @@ final class PipelineCoordinator {
     /// `.ollamaEndpointUntrusted` banner. Set by AppDelegate after the trust probe.
     var blocked: Bool = false
 
+    /// Fired when a toggle hotkey arrives while the pipeline is mid-processing
+    /// (`.transcribing` / `.cleaning` / `.pasting`) or while a previous
+    /// `processingTask` is still in flight — i.e. the press is ignored because
+    /// no state transition is possible. Used by `AudioFeedbackService.busy()`.
+    /// Not fired for the `blocked` path (that has its own banner).
+    var onBusyHotkey: (@MainActor () -> Void)?
+
     #if DEBUG
     init(
         appState: AppState,
@@ -110,6 +117,7 @@ final class PipelineCoordinator {
         }
         if let t = processingTask, !t.isCancelled {
             Log.pipeline.debug("Toggle ignored — pipeline in flight")
+            onBusyHotkey?()
             return
         }
         switch appState.state {
@@ -129,6 +137,7 @@ final class PipelineCoordinator {
             processingTask = Task { await self.processSamples(samples) }
         default:
             Log.pipeline.debug("Toggle ignored in state \(String(describing: self.appState.state), privacy: .public)")
+            onBusyHotkey?()
         }
     }
 

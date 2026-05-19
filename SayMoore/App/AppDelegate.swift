@@ -250,6 +250,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         appState.onTransition = { [audioFeedback] old, new in
             audioFeedback.handle(old: old, new: new)
         }
+        coordinator?.onBusyHotkey = { [audioFeedback] in
+            audioFeedback.busy()
+        }
 
         hotkey.isRecording = { [weak self] in
             self?.appState.state == .recording
