@@ -24,7 +24,7 @@ final class MenuBarController: NSObject {
         super.init()
 
         if let button = statusItem.button {
-            button.image = Self.image(for: .idle, phase: .idle)
+            button.image = Self.image(for: .idle, phase: .idle, elapsed: 0)
             button.image?.isTemplate = true
             button.toolTip = "SayMoore"
             button.imagePosition = .imageLeading
@@ -107,19 +107,22 @@ final class MenuBarController: NSObject {
 
     private func refreshIcon() {
         guard let button = statusItem.button else { return }
-        let img = Self.image(for: appState.state, phase: phase)
+        let elapsed = recordingStartedAt.map { Date().timeIntervalSince($0) } ?? 0
+        let img = Self.image(for: appState.state, phase: phase, elapsed: elapsed)
         button.image = img
-        button.image?.isTemplate = (phase == .idle)
+        button.image?.isTemplate = (appState.state != .recording)
+        // Title is baked into the pill image during recording; clear the
+        // status-item title slot so it doesn't render twice.
+        button.title = ""
     }
 
     private func startPulse() {
         guard pulseTimer == nil else { return }
         pulseDim = false
         recordingStartedAt = Date()
-        // Render the initial "0:00" immediately so the user sees the counter
-        // appear at hotkey-press time rather than waiting one second for the
-        // first tick.
-        statusItem.button?.title = Self.formatElapsed(0)
+        // Render the initial "0:00" pill immediately so the user sees the
+        // counter at hotkey-press time rather than waiting one second.
+        refreshIcon()
         // .common so the pulse keeps ticking while the user has the menu open.
         let timer = Timer(timeInterval: Self.pulseInterval, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
@@ -145,9 +148,8 @@ final class MenuBarController: NSObject {
         pulseDim.toggle()
         guard let button = statusItem.button else { return }
         button.appearsDisabled = pulseDim
-        if let start = recordingStartedAt {
-            button.title = Self.formatElapsed(Date().timeIntervalSince(start))
-        }
+        // Time text is baked into the pill image, so regenerate it each tick.
+        refreshIcon()
     }
 
     static func formatElapsed(_ seconds: TimeInterval) -> String {
@@ -156,48 +158,55 @@ final class MenuBarController: NSObject {
     }
 
 
-    private static func image(for state: AppState.State, phase: PipelineCoordinator.LengthCapPhase) -> NSImage? {
-        let symbolName = (state == .recording) ? "mic.fill" : "mic"
-        let accessibility = (state == .recording) ? "SayMoore recording" : "SayMoore"
-        if phase == .idle {
-            return NSImage(systemSymbolName: symbolName, accessibilityDescription: accessibility)
+    private static func image(
+        for state: AppState.State,
+        phase: PipelineCoordinator.LengthCapPhase,
+        elapsed: TimeInterval
+    ) -> NSImage? {
+        if state == .recording {
+            // Always show a pill with the elapsed timer baked in while
+            // recording. If the phase callback hasn't fired yet at the very
+            // start, default to green so the user never sees a blank pill.
+            let fill = pillColor(forRecordingPhase: phase) ?? .systemGreen
+            return pillImage(text: formatElapsed(elapsed), fill: fill)
         }
-        return pillImage(symbolName: symbolName, accessibility: accessibility, fill: pillColor(for: phase))
+        return NSImage(systemSymbolName: "mic", accessibilityDescription: "SayMoore")
     }
 
-    private static func pillColor(for phase: PipelineCoordinator.LengthCapPhase) -> NSColor {
+    private static func pillColor(forRecordingPhase phase: PipelineCoordinator.LengthCapPhase) -> NSColor? {
         switch phase {
         case .normal:  return .systemGreen
         case .caution: return .systemYellow
         case .warning: return .systemRed
-        case .idle:    return .clear
+        case .idle:    return nil
         }
     }
 
-    private static func pillImage(symbolName: String, accessibility: String, fill: NSColor) -> NSImage {
-        let size = NSSize(width: 22, height: 18)
+    private static func pillImage(text: String, fill: NSColor) -> NSImage {
+        let height: CGFloat = 18
         let radius: CGFloat = 4
-        let symbolPoint: CGFloat = 12
+        let hPadding: CGFloat = 6
+        let font = NSFont.systemFont(ofSize: 12, weight: .semibold)
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: NSColor.white
+        ]
+        let attributed = NSAttributedString(string: text, attributes: attrs)
+        let textSize = attributed.size()
+        let width = ceil(textSize.width) + hPadding * 2
+        let size = NSSize(width: width, height: height)
+        let accessibility = "SayMoore recording \(text)"
         let img = NSImage(size: size, flipped: false) { rect in
             let path = NSBezierPath(roundedRect: rect.insetBy(dx: 1, dy: 1), xRadius: radius, yRadius: radius)
             fill.setFill()
             path.fill()
-            guard let symbol = NSImage(systemSymbolName: symbolName, accessibilityDescription: accessibility) else {
-                return true
-            }
-            let cfg = NSImage.SymbolConfiguration(pointSize: symbolPoint, weight: .semibold)
-            let configured = symbol.withSymbolConfiguration(cfg) ?? symbol
-            let symbolSize = configured.size
-            let target = NSRect(
-                x: (rect.width  - symbolSize.width)  / 2,
-                y: (rect.height - symbolSize.height) / 2,
-                width:  symbolSize.width,
-                height: symbolSize.height
+            let drawRect = NSRect(
+                x: (rect.width  - textSize.width)  / 2,
+                y: (rect.height - textSize.height) / 2,
+                width: textSize.width,
+                height: textSize.height
             )
-            configured.draw(in: target)
-            // Tint the symbol white so it reads on the coloured background.
-            NSColor.white.set()
-            target.fill(using: .sourceAtop)
+            attributed.draw(in: drawRect)
             return true
         }
         img.isTemplate = false
