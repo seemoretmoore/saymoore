@@ -299,9 +299,7 @@ final class PipelineCoordinator {
 
         if transcript.isGarbage {
             Log.transcribe.info("transcript flagged garbage (avgNoSpeechProb=\(transcript.averageNoSpeechProb, privacy: .public))")
-            appState.transition(to: .error(.transcriptionGarbage))
-            appState.transition(to: .idle)
-            capturedBundleID = nil
+            transitionToError(SayMooreError.transcriptionGarbage)
             return
         }
         if transcript.text.isEmpty {

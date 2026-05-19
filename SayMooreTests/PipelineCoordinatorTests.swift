@@ -99,9 +99,11 @@ final class PipelineCoordinatorTests: XCTestCase {
         )
         fm.bundleID = "com.apple.TextEdit"
         let state = AppState()
+        var fallbackErrors: [SayMooreError] = []
         let coord = PipelineCoordinator(
             appState: state, recorder: rec,
-            transcription: trans, paste: paste, presets: stubPresets
+            transcription: trans, paste: paste, presets: stubPresets,
+            onFallback: { fallbackErrors.append($0) }
         )
 
         coord.toggle(bundleID: "com.apple.TextEdit")
@@ -110,6 +112,8 @@ final class PipelineCoordinatorTests: XCTestCase {
 
         XCTAssertEqual(state.state, .idle)
         XCTAssertEqual(kb.pastes, 0)
+        XCTAssertEqual(fallbackErrors, [.transcriptionGarbage],
+                       "garbage path must surface a notification via onFallback")
     }
 
     // MARK: - Empty transcript
