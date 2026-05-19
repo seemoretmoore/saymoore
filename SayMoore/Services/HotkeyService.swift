@@ -4,7 +4,7 @@ import Carbon.HIToolbox
 
 @MainActor
 final class HotkeyService {
-    var onToggle: ((String?) -> Void)?
+    var onToggle: ((String?, NSPoint) -> Void)?
     var onCancel: (() -> Void)?
     var isRecording: () -> Bool = { false }
 
@@ -130,8 +130,11 @@ final class HotkeyService {
         if out == .toggle {
             let id = pendingBundleID
             pendingBundleID = nil
+            // Snapshot cursor position at the moment the recogniser fires so
+            // the cursor-indicator HUD can mark where the user pressed.
+            let cursorPoint = NSEvent.mouseLocation
             Log.hotkey.info("Ctrl-Ctrl toggle (bundleID=\(id ?? "nil", privacy: .public))")
-            onToggle?(id)
+            onToggle?(id, cursorPoint)
         }
     }
 }
