@@ -7,12 +7,12 @@ final class RecordingHUDControllerTests: XCTestCase {
     func testExpandedLabelIncludesPresetName() {
         XCTAssertEqual(
             RecordingHUDController.expandedLabel(preset: "Slack"),
-            "● Recording — Slack preset"
+            "Recording — Slack"
         )
     }
 
     func testCollapsedLabelDropsPresetName() {
-        XCTAssertEqual(RecordingHUDController.collapsedLabel, "● Recording")
+        XCTAssertEqual(RecordingHUDController.collapsedLabel, "Recording")
     }
 
     func testTopCenterFrameSitsBelowMenuBar() throws {
@@ -32,9 +32,9 @@ final class RecordingHUDControllerTests: XCTestCase {
     func testShowSetsExpandedLabelThenCollapseSwitches() {
         let hud = RecordingHUDController()
         hud.show(preset: "Slack")
-        XCTAssertEqual(hud.currentLabelText, "● Recording — Slack preset")
+        XCTAssertEqual(hud.currentLabelText, "Recording — Slack")
         hud.collapseLabel()
-        XCTAssertEqual(hud.currentLabelText, "● Recording")
+        XCTAssertEqual(hud.currentLabelText, "Recording")
         hud.hide()
     }
 }

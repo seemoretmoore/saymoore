@@ -21,7 +21,7 @@ final class RecordingHUDController {
     var currentLabelText: String { labelView.stringValue }
 
     init() {
-        let size = NSSize(width: 280, height: 44)
+        let size = NSSize(width: 220, height: 30)
         panel = NSPanel(
             contentRect: NSRect(origin: .zero, size: size),
             styleMask: [.borderless, .nonactivatingPanel],
@@ -33,7 +33,7 @@ final class RecordingHUDController {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         panel.isOpaque = false
         panel.backgroundColor = .clear
-        panel.hasShadow = true
+        panel.hasShadow = false
         panel.ignoresMouseEvents = true
         panel.sharingType = .none
         panel.hidesOnDeactivate = false
@@ -43,19 +43,20 @@ final class RecordingHUDController {
         background.blendingMode = .behindWindow
         background.state = .active
         background.wantsLayer = true
-        background.layer?.cornerRadius = 10
+        background.layer?.cornerRadius = size.height / 2
         background.layer?.masksToBounds = true
 
+        let dotSize: CGFloat = 7
         dotLayer = CALayer()
-        dotLayer.frame = NSRect(x: 16, y: size.height / 2 - 5, width: 10, height: 10)
-        dotLayer.cornerRadius = 5
-        dotLayer.backgroundColor = NSColor.systemRed.cgColor
+        dotLayer.frame = NSRect(x: 12, y: (size.height - dotSize) / 2, width: dotSize, height: dotSize)
+        dotLayer.cornerRadius = dotSize / 2
+        dotLayer.backgroundColor = NSColor.systemRed.withAlphaComponent(0.85).cgColor
         background.layer?.addSublayer(dotLayer)
 
         labelView = NSTextField(labelWithString: "")
-        labelView.frame = NSRect(x: 36, y: 0, width: size.width - 44, height: size.height)
-        labelView.font = NSFont.systemFont(ofSize: 13, weight: .medium)
-        labelView.textColor = NSColor.labelColor
+        labelView.frame = NSRect(x: 26, y: 0, width: size.width - 34, height: size.height)
+        labelView.font = NSFont.systemFont(ofSize: 11, weight: .regular)
+        labelView.textColor = NSColor.secondaryLabelColor
         labelView.alignment = .left
         labelView.lineBreakMode = .byTruncatingTail
         labelView.cell?.usesSingleLineMode = true
@@ -131,10 +132,10 @@ final class RecordingHUDController {
     }
 
     static func expandedLabel(preset displayName: String) -> String {
-        "● Recording — \(displayName) preset"
+        "Recording — \(displayName)"
     }
 
-    static let collapsedLabel = "● Recording"
+    static let collapsedLabel = "Recording"
 
     static func topCenterFrame(in screen: NSScreen, size: NSSize) -> NSRect {
         let visible = screen.visibleFrame
