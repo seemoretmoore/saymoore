@@ -30,12 +30,14 @@ final class PipelineCoordinator {
     private let lengthCapCaution: TimeInterval
     private let lengthCapWarning: TimeInterval
     private let lengthCapHardStop: TimeInterval
+    private let watchdogTimeout: TimeInterval
 
     private var capturedBundleID: String?
     private var processingTask: Task<Void, Never>?
     private var cautionTimerTask: Task<Void, Never>?
     private var warningTimerTask: Task<Void, Never>?
     private var hardStopTimerTask: Task<Void, Never>?
+    private var watchdogTask: Task<Void, Never>?
 
     /// When true, the pipeline refuses to start recording and posts the
     /// `.ollamaEndpointUntrusted` banner. Set by AppDelegate after the trust probe.
@@ -68,6 +70,7 @@ final class PipelineCoordinator {
         lengthCapCaution: TimeInterval = PipelineCoordinator.defaultLengthCapCaution,
         lengthCapWarning: TimeInterval = PipelineCoordinator.defaultLengthCapWarning,
         lengthCapHardStop: TimeInterval = PipelineCoordinator.defaultLengthCapHardStop,
+        watchdogTimeout: TimeInterval = 30,
         onFallback: (@MainActor (SayMooreError) -> Void)? = nil
     ) {
         self.appState = appState
@@ -82,6 +85,7 @@ final class PipelineCoordinator {
         self.lengthCapCaution = lengthCapCaution
         self.lengthCapWarning = lengthCapWarning
         self.lengthCapHardStop = lengthCapHardStop
+        self.watchdogTimeout = watchdogTimeout
         self.onFallback = onFallback
         wireVADIfNeeded()
     }
@@ -98,6 +102,7 @@ final class PipelineCoordinator {
         lengthCapCaution: TimeInterval = PipelineCoordinator.defaultLengthCapCaution,
         lengthCapWarning: TimeInterval = PipelineCoordinator.defaultLengthCapWarning,
         lengthCapHardStop: TimeInterval = PipelineCoordinator.defaultLengthCapHardStop,
+        watchdogTimeout: TimeInterval = 30,
         onFallback: (@MainActor (SayMooreError) -> Void)? = nil
     ) {
         self.appState = appState
@@ -111,6 +116,7 @@ final class PipelineCoordinator {
         self.lengthCapCaution = lengthCapCaution
         self.lengthCapWarning = lengthCapWarning
         self.lengthCapHardStop = lengthCapHardStop
+        self.watchdogTimeout = watchdogTimeout
         self.onFallback = onFallback
         wireVADIfNeeded()
     }
@@ -164,6 +170,7 @@ final class PipelineCoordinator {
         guard appState.state == .recording else { return }
         recorder.cancel()
         cancelLengthCapTimers()
+        cancelWatchdog()
         capturedBundleID = nil
         appState.transition(to: .idle)
         Log.pipeline.info("Recording cancelled via Esc")
@@ -174,11 +181,40 @@ final class PipelineCoordinator {
         do {
             try recorder.start()
             appState.transition(to: .recording)
+            armWatchdog()
             armLengthCapTimers()
         } catch {
             Log.audio.error("recorder.start failed: \(String(describing: error), privacy: .public)")
             transitionToError(error)
         }
+    }
+
+    // MARK: - Global watchdog (one timer covers the whole start→idle run)
+
+    private func armWatchdog() {
+        cancelWatchdog()
+        let t = watchdogTimeout
+        watchdogTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(t * 1_000_000_000))
+            await MainActor.run { self?.fireWatchdog() }
+        }
+    }
+
+    private func cancelWatchdog() {
+        watchdogTask?.cancel()
+        watchdogTask = nil
+    }
+
+    private func fireWatchdog() {
+        guard appState.state != .idle else { return }
+        Log.pipeline.fault("watchdog fired in state \(String(describing: self.appState.state), privacy: .public)")
+        capturedBundleID = nil
+        processingTask?.cancel()
+        processingTask = nil
+        cancelLengthCapTimers()
+        onFallback?(.watchdogTimeout)
+        appState.transition(to: .error(.watchdogTimeout))
+        appState.transition(to: .idle)
     }
 
     /// Called by the VAD silence observer (post main-actor hop) when accumulated
@@ -274,6 +310,7 @@ final class PipelineCoordinator {
     private func processSamples(_ samples: [Float]) async {
         defer {
             processingTask = nil
+            cancelWatchdog()
             Log.pipeline.debug("processingTask cleared")
         }
 
@@ -370,6 +407,7 @@ final class PipelineCoordinator {
     }
 
     private func transitionToError(_ error: Error) {
+        cancelWatchdog()
         capturedBundleID = nil
         cancelLengthCapTimers()
         if let smError = error as? SayMooreError {
