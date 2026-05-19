@@ -46,7 +46,6 @@ unhelpful to users:
 - `.pasteInjectionFailed`
 - `.modelMissing`
 - `.diskFull`
-- `.watchdogTimeout`
 
 Add bespoke copy in a future slice if/when any of these become observable in
 the field.
