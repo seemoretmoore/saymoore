@@ -53,13 +53,17 @@ final class NotificationCoordinatorTests: XCTestCase {
         let sink = SpySink()
         let clock = FakeClock()
         let coord = NotificationCoordinator(sink: sink, cooldown: .seconds(60), now: { clock.now })
-        var observed: NotificationCoordinator.Badge? = .init(key: .ollamaUnreachable, label: "init")
-        coord.onBadgeChange = { observed = $0 }
+        var observed: [NotificationCoordinator.Badge?] = []
+        coord.onBadgeChange = { observed.append($0) }
+        let ollamaBadge = NotificationCoordinator.Badge(key: .ollamaUnreachable, label: "Ollama down")
+
         coord.notify(.ollamaUnreachable)
-        XCTAssertEqual(observed?.label, "Ollama down")
+        XCTAssertEqual(observed, [ollamaBadge])
+
         coord.notify(.pasteFocusChanged(captured: nil, current: nil))
-        XCTAssertEqual(observed?.label, "Ollama down")
+        XCTAssertEqual(observed, [ollamaBadge])
+
         coord.clearBadge(for: .ollamaUnreachable)
-        XCTAssertNil(observed)
+        XCTAssertEqual(observed, [ollamaBadge, nil])
     }
 }
