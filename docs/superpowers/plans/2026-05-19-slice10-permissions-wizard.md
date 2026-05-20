@@ -572,7 +572,9 @@ private struct PermissionRow: View {
                     .foregroundStyle(isActive ? .primary : (status == .granted ? .secondary : .primary))
 
                 if isActive {
-                    Text(reason)
+                    Text(status == .denied
+                        ? "You previously denied this. Open Settings to re-enable it."
+                        : reason)
                         .font(.callout)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -588,7 +590,7 @@ private struct PermissionRow: View {
                         if isSkippable {
                             Button("Skip for now") { onSkip?() }
                         } else {
-                            Button("I opened Settings myself") { onManual() }
+                            Button("Check Again") { onManual() }
                         }
                     }
                     .padding(.top, 2)
@@ -676,7 +678,10 @@ final class PermissionsWizardWindow: NSObject, NSWindowDelegate {
             viewModel: viewModel,
             onQuit: { NSApp.terminate(nil) }
         )
-        window.contentView = NSHostingView(rootView: view)
+        let hostingView = NSHostingView(rootView: view)
+        window.contentView = hostingView
+        window.setContentSize(hostingView.fittingSize)
+        window.center()
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
 
