@@ -13,6 +13,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var coordinator: PipelineCoordinator?
     private let hotkey = HotkeyService()
     private let presets = PresetStore()
+    private lazy var historyStore: HistoryStore? = {
+        do {
+            let dir = try HistoryStore.defaultDirectory()
+            return try HistoryStore(directory: dir)
+        } catch {
+            Log.app.error("HistoryStore init failed: \(error.localizedDescription, privacy: .public)")
+            return nil
+        }
+    }()
     private var presetWatcher: PresetWatcher?
     private var menuBar: MenuBarController?
     private var micMonitor: MicrophonePermissionMonitor?
@@ -272,6 +281,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             cleanup: cleanup,
             recordingsDir: Self.recordingsDirIfPossible(),
             vadService: vadService,
+            historyStore: historyStore,
             onFallback: { error in NotificationCoordinator.shared.notify(error) }
         )
         // C1: stamp blocked flag immediately so probe results that landed before
