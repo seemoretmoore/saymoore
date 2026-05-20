@@ -380,6 +380,27 @@ final class PipelineCoordinator {
         appState.transition(to: .pasting)
         do {
             try await paste.paste(transcript: cleaned, capturedBundleID: capturedBundleID)
+
+            let duration = Double(samples.count) / 16_000.0
+            let chosenText = cleaned.isEmpty ? transcript.text : cleaned
+            let wordCount = chosenText
+                .split(whereSeparator: { $0.isWhitespace || $0.isPunctuation })
+                .count
+            let entry = HistoryEntry(
+                schemaVersion: HistoryEntry.currentSchemaVersion,
+                id: UUID(),
+                timestamp: Date(),
+                durationSeconds: duration,
+                rawTranscript: transcript.text,
+                cleanedTranscript: cleaned == transcript.text ? nil : cleaned,
+                bundleID: capturedBundleID,
+                wordCount: wordCount
+            )
+            do {
+                try await historyStore?.append(entry)
+            } catch {
+                Log.pipeline.error("history append failed: \(error.localizedDescription, privacy: .public)")
+            }
         } catch let e as SayMooreError {
             Log.paste.error("paste failed: \(String(describing: e), privacy: .public)")
             appState.transition(to: .error(e))
@@ -388,27 +409,6 @@ final class PipelineCoordinator {
             Log.paste.error("paste failed: \(String(describing: error), privacy: .public)")
             appState.transition(to: .error(.pasteInjectionFailed))
             onFallback?(.pasteInjectionFailed)
-        }
-
-        let duration = Double(samples.count) / 16_000.0
-        let chosenText = cleaned.isEmpty ? transcript.text : cleaned
-        let wordCount = chosenText
-            .split(whereSeparator: { $0.isWhitespace || $0.isPunctuation })
-            .count
-        let entry = HistoryEntry(
-            schemaVersion: HistoryEntry.currentSchemaVersion,
-            id: UUID(),
-            timestamp: Date(),
-            durationSeconds: duration,
-            rawTranscript: transcript.text,
-            cleanedTranscript: cleaned == transcript.text ? nil : cleaned,
-            bundleID: capturedBundleID,
-            wordCount: wordCount
-        )
-        do {
-            try await historyStore?.append(entry)
-        } catch {
-            Log.pipeline.error("history append failed: \(error.localizedDescription, privacy: .public)")
         }
 
         capturedBundleID = nil
