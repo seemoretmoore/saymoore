@@ -86,3 +86,116 @@ final class PermissionStatusesTests: XCTestCase {
         XCTAssertEqual(s.currentStep, 5)
     }
 }
+
+// MARK: - PermissionsViewModel tests
+
+@MainActor
+final class PermissionsViewModelTests: XCTestCase {
+
+    func test_recheck_requestsMicrophoneOnce_whenNotDetermined() async {
+        let checker = MockPermissionChecker()
+        checker.micStatus = .notDetermined
+        let vm = PermissionsViewModel(checker: checker)
+        await vm.recheck()
+        await vm.recheck()
+        XCTAssertEqual(checker.micRequestCount, 1)
+    }
+
+    func test_recheck_doesNotRequestMicrophone_whenAlreadyGranted() async {
+        let checker = MockPermissionChecker()
+        checker.micStatus = .granted
+        checker.accessStatus = .granted
+        checker.inputStatus = .granted
+        checker.notifStatus = .granted
+        let vm = PermissionsViewModel(checker: checker)
+        await vm.recheck()
+        XCTAssertEqual(checker.micRequestCount, 0)
+    }
+
+    func test_recheck_updatesStatuses_afterCheck() async {
+        let checker = MockPermissionChecker()
+        checker.micStatus = .granted
+        checker.accessStatus = .denied
+        checker.inputStatus = .notDetermined
+        checker.notifStatus = .notDetermined
+        let vm = PermissionsViewModel(checker: checker)
+        await vm.recheck()
+        XCTAssertEqual(vm.statuses.microphone, .granted)
+        XCTAssertEqual(vm.statuses.accessibility, .denied)
+        XCTAssertEqual(vm.statuses.inputMonitoring, .notDetermined)
+    }
+
+    func test_recheck_firesOnAllGranted_whenAllRequiredGranted() async {
+        let checker = MockPermissionChecker()
+        checker.micStatus = .granted
+        checker.accessStatus = .granted
+        checker.inputStatus = .granted
+        checker.notifStatus = .granted
+        let vm = PermissionsViewModel(checker: checker)
+        var fireCount = 0
+        vm.onAllGranted = { fireCount += 1 }
+        await vm.recheck()
+        await vm.recheck()
+        XCTAssertEqual(fireCount, 1)
+    }
+
+    func test_recheck_doesNotFireOnAllGranted_whenInputMonitoringMissing() async {
+        let checker = MockPermissionChecker()
+        checker.micStatus = .granted
+        checker.accessStatus = .granted
+        checker.inputStatus = .notDetermined
+        checker.notifStatus = .granted
+        let vm = PermissionsViewModel(checker: checker)
+        var fired = false
+        vm.onAllGranted = { fired = true }
+        await vm.recheck()
+        XCTAssertFalse(fired)
+    }
+
+    func test_recheck_requestsNotificationsOnce_whenNotificationsPending() async {
+        let checker = MockPermissionChecker()
+        checker.micStatus = .granted
+        checker.accessStatus = .granted
+        checker.inputStatus = .granted
+        checker.notifStatus = .notDetermined
+        let vm = PermissionsViewModel(checker: checker)
+        await vm.recheck()
+        await vm.recheck()
+        XCTAssertEqual(checker.notifRequestCount, 1)
+    }
+
+    func test_recheck_doesNotRequestNotifications_whenRequiredPermissionsMissing() async {
+        let checker = MockPermissionChecker()
+        checker.micStatus = .granted
+        checker.accessStatus = .granted
+        checker.inputStatus = .notDetermined   // still on step 3
+        checker.notifStatus = .notDetermined
+        let vm = PermissionsViewModel(checker: checker)
+        await vm.recheck()
+        XCTAssertEqual(checker.notifRequestCount, 0)
+    }
+
+    func test_skipNotifications_firesOnAllGranted_whenRequiredGranted() async {
+        let checker = MockPermissionChecker()
+        checker.micStatus = .granted
+        checker.accessStatus = .granted
+        checker.inputStatus = .granted
+        checker.notifStatus = .notDetermined
+        let vm = PermissionsViewModel(checker: checker)
+        await vm.recheck()   // populates statuses
+        var fired = false
+        vm.onAllGranted = { fired = true }
+        vm.skipNotifications()
+        XCTAssertTrue(fired)
+    }
+
+    func test_skipNotifications_doesNotFire_whenRequiredPermissionsMissing() async {
+        let checker = MockPermissionChecker()
+        checker.micStatus = .notDetermined
+        let vm = PermissionsViewModel(checker: checker)
+        var fired = false
+        vm.onAllGranted = { fired = true }
+        vm.skipNotifications()
+        XCTAssertFalse(fired)
+    }
+}
