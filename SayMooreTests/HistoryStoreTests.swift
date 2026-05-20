@@ -89,3 +89,39 @@ extension HistoryStoreTests {
         XCTAssertEqual(mode & 0o777, 0o600, "file should be mode 0600")
     }
 }
+
+extension HistoryStoreTests {
+    func test_concurrentAppends_noLoss_noCorruption() async throws {
+        let (store, tmp) = try makeTempStore()
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        let writers = 20
+        let perWriter = 5  // total 100, will cap at 50
+
+        await withTaskGroup(of: Void.self) { group in
+            for w in 0..<writers {
+                group.addTask {
+                    for j in 0..<perWriter {
+                        let entry = HistoryEntry(
+                            schemaVersion: HistoryEntry.currentSchemaVersion,
+                            id: UUID(),
+                            timestamp: Date(),
+                            durationSeconds: 0.1,
+                            rawTranscript: "w\(w)-j\(j)",
+                            cleanedTranscript: nil,
+                            bundleID: nil,
+                            wordCount: 0
+                        )
+                        try? await store.append(entry)
+                    }
+                }
+            }
+        }
+
+        let entries = try await store.loadAll()
+        XCTAssertEqual(entries.count, HistoryStoreSupport.maxEntries,
+                       "should reach the cap exactly with no corruption / no lost lines")
+        XCTAssertEqual(Set(entries.map(\.id)).count, entries.count,
+                       "all retained entries should be unique")
+    }
+}
