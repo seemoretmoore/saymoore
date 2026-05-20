@@ -58,4 +58,34 @@ extension HistoryStoreTests {
         XCTAssertEqual(all.first?.rawTranscript, "entry 10")
         XCTAssertEqual(all.last?.rawTranscript, "entry 59")
     }
+
+    func test_init_setsDirectoryMode0700_andExcludesFromBackup() throws {
+        let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("HistoryStoreTests-\(UUID().uuidString).noindex", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        _ = try HistoryStore(directory: tmp, fileName: "history.jsonl")
+
+        let attrs = try FileManager.default.attributesOfItem(atPath: tmp.path)
+        let mode = (attrs[.posixPermissions] as? NSNumber)?.uint16Value ?? 0
+        XCTAssertEqual(mode & 0o777, 0o700, "directory should be mode 0700")
+
+        let helper = { (url: inout URL) -> Bool in
+            try url.resourceValues(forKeys: [.isExcludedFromBackupKey]).isExcludedFromBackup ?? false
+        }
+        var mutableURL = tmp
+        XCTAssertEqual(try helper(&mutableURL), true)
+    }
+
+    func test_append_setsFileMode0600() async throws {
+        let (store, tmp) = try makeTempStore()
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        try await store.append(makeEntry(0))
+
+        let fileURL = tmp.appendingPathComponent("history.jsonl")
+        let attrs = try FileManager.default.attributesOfItem(atPath: fileURL.path)
+        let mode = (attrs[.posixPermissions] as? NSNumber)?.uint16Value ?? 0
+        XCTAssertEqual(mode & 0o777, 0o600, "file should be mode 0600")
+    }
 }

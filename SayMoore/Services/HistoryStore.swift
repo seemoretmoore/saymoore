@@ -28,10 +28,7 @@ actor HistoryStore {
         self.fileURL = directory.appendingPathComponent(fileName, isDirectory: false)
         self.encoder = HistoryStore.makeEncoder()
         self.decoder = HistoryStore.makeDecoder()
-        let fm = FileManager.default
-        if !fm.fileExists(atPath: directory.path) {
-            try fm.createDirectory(at: directory, withIntermediateDirectories: true, attributes: nil)
-        }
+        try ensureDirectory()
     }
 
     func append(_ entry: HistoryEntry) throws {
@@ -78,6 +75,26 @@ actor HistoryStore {
         return out
     }
 
+    nonisolated private func ensureDirectory() throws {
+        let fm = FileManager.default
+        if !fm.fileExists(atPath: directory.path) {
+            try fm.createDirectory(
+                at: directory,
+                withIntermediateDirectories: true,
+                attributes: [.posixPermissions: NSNumber(value: 0o700)]
+            )
+        } else {
+            try fm.setAttributes(
+                [.posixPermissions: NSNumber(value: 0o700)],
+                ofItemAtPath: directory.path
+            )
+        }
+        var url = directory
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        try url.setResourceValues(values)
+    }
+
     private func writeAtomically(_ entries: [HistoryEntry]) throws {
         var blob = Data()
         for entry in entries {
@@ -94,5 +111,9 @@ actor HistoryStore {
         } else {
             try fm.moveItem(at: tmpURL, to: fileURL)
         }
+        try fm.setAttributes(
+            [.posixPermissions: NSNumber(value: 0o600)],
+            ofItemAtPath: fileURL.path
+        )
     }
 }
