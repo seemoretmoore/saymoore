@@ -22,6 +22,7 @@ final class PipelineCoordinator {
     private let paste: PasteService
     private let presets: PresetResolving
     private let recordingsDir: URL?
+    private let historyStore: HistoryStore?
     #if DEBUG
     private let persistRawWAV: Bool
     #endif
@@ -67,6 +68,7 @@ final class PipelineCoordinator {
         recordingsDir: URL? = nil,
         persistRawWAV: Bool = false,
         vadService: VADService? = nil,
+        historyStore: HistoryStore? = nil,
         lengthCapCaution: TimeInterval = PipelineCoordinator.defaultLengthCapCaution,
         lengthCapWarning: TimeInterval = PipelineCoordinator.defaultLengthCapWarning,
         lengthCapHardStop: TimeInterval = PipelineCoordinator.defaultLengthCapHardStop,
@@ -82,6 +84,7 @@ final class PipelineCoordinator {
         self.recordingsDir = recordingsDir
         self.persistRawWAV = persistRawWAV
         self.vadService = vadService
+        self.historyStore = historyStore
         self.lengthCapCaution = lengthCapCaution
         self.lengthCapWarning = lengthCapWarning
         self.lengthCapHardStop = lengthCapHardStop
@@ -99,6 +102,7 @@ final class PipelineCoordinator {
         cleanup: TranscriptCleaning? = nil,
         recordingsDir: URL? = nil,
         vadService: VADService? = nil,
+        historyStore: HistoryStore? = nil,
         lengthCapCaution: TimeInterval = PipelineCoordinator.defaultLengthCapCaution,
         lengthCapWarning: TimeInterval = PipelineCoordinator.defaultLengthCapWarning,
         lengthCapHardStop: TimeInterval = PipelineCoordinator.defaultLengthCapHardStop,
@@ -113,6 +117,7 @@ final class PipelineCoordinator {
         self.presets = presets
         self.recordingsDir = recordingsDir
         self.vadService = vadService
+        self.historyStore = historyStore
         self.lengthCapCaution = lengthCapCaution
         self.lengthCapWarning = lengthCapWarning
         self.lengthCapHardStop = lengthCapHardStop
@@ -383,6 +388,27 @@ final class PipelineCoordinator {
             Log.paste.error("paste failed: \(String(describing: error), privacy: .public)")
             appState.transition(to: .error(.pasteInjectionFailed))
             onFallback?(.pasteInjectionFailed)
+        }
+
+        let duration = Double(samples.count) / 16_000.0
+        let chosenText = cleaned.isEmpty ? transcript.text : cleaned
+        let wordCount = chosenText
+            .split(whereSeparator: { $0.isWhitespace || $0.isPunctuation })
+            .count
+        let entry = HistoryEntry(
+            schemaVersion: HistoryEntry.currentSchemaVersion,
+            id: UUID(),
+            timestamp: Date(),
+            durationSeconds: duration,
+            rawTranscript: transcript.text,
+            cleanedTranscript: cleaned == transcript.text ? nil : cleaned,
+            bundleID: capturedBundleID,
+            wordCount: wordCount
+        )
+        do {
+            try await historyStore?.append(entry)
+        } catch {
+            Log.pipeline.error("history append failed: \(error.localizedDescription, privacy: .public)")
         }
 
         capturedBundleID = nil
