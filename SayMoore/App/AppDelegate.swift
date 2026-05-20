@@ -18,6 +18,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var micMonitor: MicrophonePermissionMonitor?
     private var bootstrap: ModelBootstrap?
     private var bootstrapWindow: ModelDownloadWindow?
+    private var permissionsWindow: PermissionsWizardWindow?
     private let audioFeedback = AudioFeedbackService()
     private let hud = RecordingHUDController()
     private let cursorIndicator = CursorIndicatorController()
@@ -64,6 +65,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         #endif
 
         Task {
+            await permissionsWizardIfNeeded()
             await bootstrapModelThenStart()
         }
 
@@ -188,6 +190,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .vocabularyMalformed:
             return "Vocabulary in presets.json is malformed (expected an array of {phonetic, canonical} entries) — vocabulary disabled."
         }
+    }
+
+    private func permissionsWizardIfNeeded() async {
+        let checker = LivePermissionChecker()
+        guard !(checker.microphoneStatus() == .granted &&
+                checker.accessibilityStatus() == .granted &&
+                checker.inputMonitoringStatus() == .granted) else { return }
+        let win = PermissionsWizardWindow(checker: checker)
+        permissionsWindow = win
+        await win.present()
+        win.close()
+        permissionsWindow = nil
     }
 
     // MARK: - Bootstrap
