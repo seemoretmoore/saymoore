@@ -59,6 +59,20 @@ actor HistoryStore {
         return decoder
     }
 
+    /// Resolves `~/Library/Application Support/SayMoore/History.noindex/` via FileManager.
+    /// The `.noindex` suffix prevents Spotlight from indexing transcripts.
+    static func defaultDirectory() throws -> URL {
+        let appSupport = try FileManager.default.url(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: true
+        )
+        return appSupport
+            .appendingPathComponent("SayMoore", isDirectory: true)
+            .appendingPathComponent("History.noindex", isDirectory: true)
+    }
+
     // MARK: - Internals
 
     private func loadAllSync() throws -> [HistoryEntry] {
