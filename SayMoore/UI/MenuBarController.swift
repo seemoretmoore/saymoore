@@ -9,6 +9,7 @@ final class MenuBarController: NSObject {
     private let statusItem: NSStatusItem
     private let appState: AppState
     private let presets: PresetStore
+    private let historyStore: HistoryStore?
     private let titleItem: NSMenuItem
     private var cancellables: Set<AnyCancellable> = []
     private var pulseTimer: Timer?
@@ -17,9 +18,10 @@ final class MenuBarController: NSObject {
     private var phase: PipelineCoordinator.LengthCapPhase = .idle
     private var badge: NotificationCoordinator.Badge?
 
-    init(appState: AppState, presets: PresetStore) {
+    init(appState: AppState, presets: PresetStore, historyStore: HistoryStore? = nil) {
         self.appState = appState
         self.presets = presets
+        self.historyStore = historyStore
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         self.titleItem = NSMenuItem(title: "SayMoore (idle)", action: nil, keyEquivalent: "")
         super.init()
@@ -51,6 +53,15 @@ final class MenuBarController: NSObject {
         )
         reloadItem.target = self
         menu.addItem(reloadItem)
+
+        let debugLogItem = NSMenuItem(
+            title: "Open Debug Log in Finder",
+            action: #selector(openDebugLogTapped),
+            keyEquivalent: ""
+        )
+        debugLogItem.target = self
+        menu.addItem(.separator())
+        menu.addItem(debugLogItem)
 
         menu.addItem(.separator())
         menu.addItem(
@@ -85,6 +96,22 @@ final class MenuBarController: NSObject {
                 title: "SayMoore",
                 body: "Presets reloaded."
             )
+        }
+    }
+
+    @objc private func openDebugLogTapped() {
+        guard let store = historyStore else {
+            NSSound.beep()
+            return
+        }
+        Task {
+            let url = await store.debugLogURL
+            if FileManager.default.fileExists(atPath: url.path) {
+                NSWorkspace.shared.activateFileViewerSelecting([url])
+            } else {
+                // Reveal the parent .noindex dir if the file doesn't exist yet.
+                NSWorkspace.shared.activateFileViewerSelecting([url.deletingLastPathComponent()])
+            }
         }
     }
 

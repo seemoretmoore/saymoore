@@ -53,7 +53,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Log.app.info("signing: ident=\(ident, privacy: .public) flags=0x\(String(flags, radix: 16), privacy: .public) cdhash=\(cdhash, privacy: .public)")
         }
         NSApp.setActivationPolicy(.accessory)
-        menuBar = MenuBarController(appState: appState, presets: presets)
+        menuBar = MenuBarController(appState: appState, presets: presets, historyStore: historyStore)
 
         // Surface any vocabulary warning captured during PresetStore.init.
         // PresetStore has already primed its dedupe state with this warning,
