@@ -111,6 +111,7 @@ targets:
     platform: macOS
     sources:
       - path: SayMooreTests
+      - path: scripts/lib/appcast.swift
     resources:
       - path: SayMoore/Resources/presets.example.json
     dependencies:
