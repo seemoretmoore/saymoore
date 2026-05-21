@@ -63,6 +63,15 @@ final class MenuBarController: NSObject {
         menu.addItem(.separator())
         menu.addItem(debugLogItem)
 
+        let updatesItem = NSMenuItem(
+            title: "Check for Updates…",
+            action: #selector(UpdaterService.checkForUpdates(_:)),
+            keyEquivalent: ""
+        )
+        updatesItem.target = UpdaterService.shared
+        menu.addItem(.separator())
+        menu.addItem(updatesItem)
+
         menu.addItem(.separator())
         menu.addItem(
             withTitle: "Quit SayMoore",
