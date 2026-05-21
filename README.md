@@ -98,6 +98,10 @@ ollama pull qwen2.5:7b-instruct
 # 4. Launch — the first-run wizard handles permissions and Whisper model download
 ```
 
+## Updates
+
+SayMoore checks for updates daily via [Sparkle](https://sparkle-project.org). Click the menu-bar icon → **Check for Updates…** to check now. Updates are EdDSA-signed; tampered downloads are rejected automatically.
+
 ## Known limitations (today)
 
 - No GUI installer. Build-from-source only.
