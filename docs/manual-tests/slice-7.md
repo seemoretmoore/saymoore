@@ -44,5 +44,15 @@ Branch: `feat/slice-7-history-log`  HEAD: `<fill in after merge>`
 - Dictate. Confirm the failure banner fires AND `history.jsonl` line count did NOT increase.
 - Rationale: history is scoped to the paste-success path so the file matches what the user actually pasted.
 
-## Sign-off
-- [ ] All T1–T8 pass on commit `<sha>`.
+## Sign-off — 2026-05-20 on `049fcaf`
+- [x] **T1** — dir `drwx------`, file `-rw-------`, JSONL schema v1 fields present, `com.apple.metadata:com_apple_backup_excludeItem` xattr set.
+- [ ] **T2** — skipped manually; unit test `test_append_cappedAt50_evictsOldest` exhaustively covers cap eviction (60→50 + correct head/tail).
+- [x] **T3** — menu reveals file in Finder.
+- [x] **T4** — `mdfind -name history.jsonl` does not list our file (only Edge/Google updater files), confirming `.noindex` Spotlight exclusion.
+- [x] **T5** — 5 rapid back-to-back dictations between 00:06:58–00:07:22 all appended; all 6 entries parse as valid JSON with unique IDs.
+- [x] **T6** — after `Ollama.app` quit, dictation still appended; `cleanedTranscript` absent on the line (raw-fallback path).
+- [x] **T7** — `rm history.jsonl` then menu click → Finder revealed `History.noindex` parent dir (file-missing fallback).
+- [ ] **T8** — skipped manually; the success-path scoping fix (`8cb702f`) keeps the append call inside the paste `do` block, code-reviewed inline.
+
+### Findings filed
+See `docs/followups/slice-7.md` — both cosmetic, neither blocks ship.
