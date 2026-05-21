@@ -53,6 +53,10 @@ Icon?
 .vscode/
 *.iml
 
+# Slice 11 — release artifacts
+release/
+*.xcarchive
+
 # Misc
 *.log
 *.bak
