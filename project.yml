@@ -11,6 +11,9 @@ packages:
   onnxruntime:
     url: https://github.com/microsoft/onnxruntime-swift-package-manager
     from: "1.20.0"
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    from: "2.6.4"
 
 settings:
   base:
@@ -21,7 +24,7 @@ settings:
     DEVELOPMENT_TEAM: ""
     ENABLE_HARDENED_RUNTIME: YES
     ENABLE_DEBUG_DYLIB: NO
-    MARKETING_VERSION: "0.1.0"
+    MARKETING_VERSION: "0.9.0"
     CURRENT_PROJECT_VERSION: "1"
     SWIFT_TREAT_WARNINGS_AS_ERRORS: YES
     GCC_TREAT_WARNINGS_AS_ERRORS: NO
@@ -62,6 +65,8 @@ targets:
         codeSign: true
       - package: onnxruntime
         product: onnxruntime
+      - package: Sparkle
+        product: Sparkle
     postBuildScripts:
       - name: Assert non-adhoc signing
         basedOnDependencyAnalysis: false
