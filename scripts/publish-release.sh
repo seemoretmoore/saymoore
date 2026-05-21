@@ -78,13 +78,18 @@ else
         --title "SayMoore $VERSION" \
         --notes "Automated release."
 fi
+# Also attach appcast.xml to the versioned release. GitHub's
+# /releases/latest/download/ alias resolves to the newest semver tag, not the
+# literal "latest" tag — so the appcast must live on the versioned release too
+# or Sparkle clients hit a 404 until the CDN catches up.
+gh release upload "$TAG" "$OUT/appcast.xml" --clobber --repo "$REPO"
 
-# Rolling "latest" release: hosts the current appcast.xml.
+# Rolling "latest" release: also hosts the current appcast.xml (mirror).
 if ! gh release view latest --repo "$REPO" >/dev/null 2>&1; then
     gh release create latest \
         --repo "$REPO" \
         --title "Latest appcast" \
-        --notes "Rolling release that hosts the current appcast.xml. Do not delete."
+        --notes "Rolling release that mirrors the current appcast.xml. Do not delete."
 fi
 gh release upload latest "$OUT/appcast.xml" --clobber --repo "$REPO"
 
