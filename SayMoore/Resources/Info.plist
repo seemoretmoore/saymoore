@@ -30,5 +30,15 @@
 	<string>SayMoore captures your voice when you press the Ctrl-Ctrl hotkey, then transcribes it on-device. Audio is never sent off your Mac.</string>
 	<key>NSAppleEventsUsageDescription</key>
 	<string>SayMoore pastes cleaned transcripts into the focused app via a synthetic Cmd+V keystroke.</string>
+	<key>SUFeedURL</key>
+	<string>https://github.com/seemoretmoore/saymoore/releases/latest/download/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>1h1q1LdrSiI2yeaYzjJHOax60nb0VnNI9baUtnp8pNg=</string>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUScheduledCheckInterval</key>
+	<integer>86400</integer>
+	<key>SUEnableInstallerLauncherService</key>
+	<false/>
 </dict>
 </plist>
