@@ -52,6 +52,7 @@ final class PipelineCoordinatorTests: XCTestCase {
             Preset(name: "stub", promptTemplate: "{{transcript}}")
         }
         func vocabulary() -> [VocabEntry] { [] }
+        func snippets() -> [String: String] { [:] }
     }
     private let stubPresets = StubPresets()
 

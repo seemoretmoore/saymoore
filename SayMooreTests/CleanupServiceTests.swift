@@ -5,10 +5,12 @@ final class CleanupServiceTests: XCTestCase {
 
     private struct StubPresets: PresetResolving {
         var vocab: [VocabEntry] = []
+        var snippetMap: [String: String] = [:]
         func preset(for bundleID: String?) -> Preset {
             Preset(name: "stub", promptTemplate: "{{transcript}}")
         }
         func vocabulary() -> [VocabEntry] { vocab }
+        func snippets() -> [String: String] { snippetMap }
     }
 
     private final class FakeOllama: OllamaClient, @unchecked Sendable {

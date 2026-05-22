@@ -29,12 +29,22 @@ final class PipelineCoordinatorCleanupTests: XCTestCase {
         var bundleID: String?
     }
     private struct StubPresets: PresetResolving {
+        var snippetMap: [String: String] = [:]
         func preset(for bundleID: String?) -> Preset {
             Preset(name: "stub", promptTemplate: "{{transcript}}")
         }
         func vocabulary() -> [VocabEntry] { [] }
+        func snippets() -> [String: String] { snippetMap }
     }
     private let stubPresets = StubPresets()
+
+    /// Variant of stubPresets with snippets configured. Used by the snippet
+    /// integration tests to verify expansion flows through `maybeCleanup`.
+    private func makeStubPresets(snippets: [String: String]) -> StubPresets {
+        var s = StubPresets()
+        s.snippetMap = snippets
+        return s
+    }
     private final class FakeCleanup: TranscriptCleaning, @unchecked Sendable {
         var nextResult: Result<String, Error> = .success("CLEANED")
         private(set) var calls = 0
@@ -52,6 +62,7 @@ final class PipelineCoordinatorCleanupTests: XCTestCase {
     private func makeRig(
         transcript: Transcript = Transcript(text: "uh I think this is a test", averageNoSpeechProb: 0),
         cleanup: FakeCleanup = FakeCleanup(),
+        presets: StubPresets? = nil,
         fallbackSink: (@MainActor (SayMooreError) -> Void)? = nil
     ) -> (PipelineCoordinator, AppState, FakeCleanup, FakePasteboard, FakeKeyboard) {
         let rec = FakeRecorder()
@@ -68,7 +79,7 @@ final class PipelineCoordinatorCleanupTests: XCTestCase {
             recorder: rec,
             transcription: trans,
             paste: paste,
-            presets: stubPresets,
+            presets: presets ?? stubPresets,
             cleanup: cleanup,
             onFallback: fallbackSink
         )
@@ -153,5 +164,59 @@ final class PipelineCoordinatorCleanupTests: XCTestCase {
         XCTAssertEqual(cleanup.calls, 0, "3-word transcript must still take fast path")
         XCTAssertEqual(kb.pastes, 1)
         XCTAssertEqual(state.state, .idle)
+    }
+
+    // MARK: - Snippet integration (v1.1)
+
+    func testSnippetExpandsBeforeCleanupSeesIt() async throws {
+        let fake = FakeCleanup()
+        fake.nextResult = .success("Thanks — Tracy please review")
+        let (coord, state, cleanup, _, kb) = makeRig(
+            transcript: Transcript(text: "thanks insert sig please review", averageNoSpeechProb: 0),
+            cleanup: fake,
+            presets: makeStubPresets(snippets: ["sig": "— Tracy"])
+        )
+        coord.toggle(bundleID: "com.apple.TextEdit")
+        coord.toggle(bundleID: nil)
+        try await Task.sleep(for: .milliseconds(80))
+        // The cleanup service must see the EXPANDED transcript, not the raw one.
+        XCTAssertEqual(cleanup.lastRaw, "thanks — Tracy please review",
+                       "snippets must expand before the LLM sees the transcript")
+        XCTAssertEqual(kb.pastes, 1)
+        XCTAssertEqual(state.state, .idle)
+    }
+
+    func testSnippetExpandsOnFastPath() async throws {
+        // 3-word raw → fast-path skips cleanup; snippet still expands.
+        let (coord, _, cleanup, pb, kb) = makeRig(
+            transcript: Transcript(text: "insert sig now", averageNoSpeechProb: 0),
+            presets: makeStubPresets(snippets: ["sig": "— Tracy"])
+        )
+        coord.toggle(bundleID: "com.apple.TextEdit")
+        coord.toggle(bundleID: nil)
+        try await Task.sleep(for: .milliseconds(80))
+        XCTAssertEqual(cleanup.calls, 0, "must take fast path")
+        XCTAssertEqual(kb.pastes, 1)
+        XCTAssertEqual(pb.current, "previous", "clipboard restored")
+        // The pasted text should have had the snippet expanded.
+        // (FakePasteboard restores the prior clipboard; we can't read what
+        // was pasted directly, but cleanup not running + paste happening
+        // confirms the fast-path branch fired. Pattern matches the existing
+        // testFastPathSkipsCleanupForShortTranscript assertion shape.)
+    }
+
+    func testSnippetUnchangedWhenNoMatch() async throws {
+        let fake = FakeCleanup()
+        fake.nextResult = .success("Cleaned")
+        let (coord, _, cleanup, _, _) = makeRig(
+            transcript: Transcript(text: "no snippet keyword present here", averageNoSpeechProb: 0),
+            cleanup: fake,
+            presets: makeStubPresets(snippets: ["sig": "— Tracy"])
+        )
+        coord.toggle(bundleID: "com.apple.TextEdit")
+        coord.toggle(bundleID: nil)
+        try await Task.sleep(for: .milliseconds(80))
+        XCTAssertEqual(cleanup.lastRaw, "no snippet keyword present here",
+                       "no expansion when no `insert <name>` trigger present")
     }
 }

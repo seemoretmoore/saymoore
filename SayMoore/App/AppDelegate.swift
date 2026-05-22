@@ -65,6 +65,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 body: Self.bannerCopy(for: warn)
             )
         }
+        if let warn = presets.initialSnippetsWarning {
+            Log.presets.error("snippets rejected at launch: \(String(describing: warn), privacy: .public)")
+            NotificationCenterAdapter.shared.notify(
+                title: "Preset warning",
+                body: Self.bannerCopy(for: warn)
+            )
+        }
 
         // Bundled-preset upgrade check. Existing v1.0.1 users have no
         // `$schemaVersion` field on disk → treated as 0; bundled is currently
@@ -170,6 +177,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     body: bannerCopy(for: warn)
                 )
             }
+            if let warn = outcome.snippetsWarning {
+                Log.presets.error("snippets rejected on reload: \(String(describing: warn), privacy: .public)")
+                NotificationCenterAdapter.shared.notify(
+                    title: "Preset warning",
+                    body: bannerCopy(for: warn)
+                )
+            }
             return true
         } catch {
             Log.presets.error("presets reload failed: \(String(describing: error), privacy: .public)")
@@ -263,6 +277,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return "Vocabulary in presets.json is too large overall (max 512 B) — vocabulary disabled."
         case .vocabularyMalformed:
             return "Vocabulary in presets.json is malformed (expected an array of {phonetic, canonical} entries) — vocabulary disabled."
+        case .tooManySnippets:
+            return "Too many snippets in presets.json (max 20) — snippets disabled."
+        case .snippetNameInvalid:
+            return "A snippet name in presets.json contains invalid characters (only letters, digits, _, -) — snippets disabled."
+        case .snippetEntryTooLong:
+            return "A snippet entry in presets.json is too long (max 32 bytes for name, 512 bytes for value) — snippets disabled."
+        case .snippetsTooLarge:
+            return "Snippets in presets.json are too large overall (max 8 KB) — snippets disabled."
+        case .snippetsMalformed:
+            return "Snippets in presets.json are malformed (expected an object of {name: text} pairs) — snippets disabled."
         }
     }
 

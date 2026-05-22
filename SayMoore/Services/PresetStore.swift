@@ -18,6 +18,14 @@ enum PresetStoreError: Error, Equatable {
     case vocabEntryTooLong(bytes: Int)
     case vocabularyTooLarge(bytes: Int)
     case vocabularyMalformed
+    // Snippets errors — non-fatal (partial-failure semantics). Snippets are
+    // user-defined voice macros; bounds protect against runaway regex /
+    // payload size while keeping the rest of presets.json working.
+    case tooManySnippets(count: Int)
+    case snippetNameInvalid // pattern violation, not just empty
+    case snippetEntryTooLong(bytes: Int)
+    case snippetsTooLarge(bytes: Int)
+    case snippetsMalformed
 }
 
 extension PresetStoreError {
@@ -41,6 +49,11 @@ extension PresetStoreError {
         case .vocabEntryTooLong: return "vocabEntryTooLong"
         case .vocabularyTooLarge: return "vocabularyTooLarge"
         case .vocabularyMalformed: return "vocabularyMalformed"
+        case .tooManySnippets: return "tooManySnippets"
+        case .snippetNameInvalid: return "snippetNameInvalid"
+        case .snippetEntryTooLong: return "snippetEntryTooLong"
+        case .snippetsTooLarge: return "snippetsTooLarge"
+        case .snippetsMalformed: return "snippetsMalformed"
         }
     }
 }
@@ -57,6 +70,11 @@ struct VocabEntry: Equatable, Sendable {
 protocol PresetResolving: Sendable {
     func preset(for bundleID: String?) -> Preset
     func vocabulary() -> [VocabEntry]
+    /// User-defined voice snippets: `name → expansion`. The dictation pipeline
+    /// runs a word-boundary `insert <name>` substitution on the raw transcript
+    /// *before* cleanup, so the LLM sees the expanded text and can adjust
+    /// grammar around it. Empty map = feature inert.
+    func snippets() -> [String: String]
 }
 
 /// Result of comparing the bundled `presets.example.json` schema version against
@@ -86,6 +104,7 @@ enum PresetUpgradeStrategy: Sendable {
 /// discriminant repeats and recoveries are silenced so menu/FS reloads don't spam.
 struct ReloadOutcome {
     let vocabularyWarning: PresetStoreError?
+    let snippetsWarning: PresetStoreError?
 }
 
 final class PresetStore: PresetResolving, @unchecked Sendable {
@@ -129,6 +148,7 @@ final class PresetStore: PresetResolving, @unchecked Sendable {
     private var currentDefault: Preset
     private var currentOverrides: [String: Preset] = [:]
     private var currentVocabulary: [VocabEntry] = []
+    private var currentSnippets: [String: String] = [:]
     private var currentSchemaVersion: Int = 0
 
     /// One-shot snapshot of any vocabulary warning surfaced during `init`.
@@ -136,9 +156,13 @@ final class PresetStore: PresetResolving, @unchecked Sendable {
     /// launch-time banner. NOT current state — never reread post-launch.
     let initialVocabularyWarning: PresetStoreError?
 
+    /// One-shot snapshot of any snippets warning surfaced during `init`.
+    let initialSnippetsWarning: PresetStoreError?
+
     /// Dedupe state for reload-warning banners (guarded by `lock`).
     /// Same-discriminant repeats return `vocabularyWarning: nil` from `reload()`.
     private var lastSurfacedVocabWarning: PresetStoreError?
+    private var lastSurfacedSnippetsWarning: PresetStoreError?
 
     /// Production initializer. Ensures the preset directory exists, materializes
     /// `presets.json` from the bundled example (or hardcoded baseline as fallback)
@@ -154,6 +178,7 @@ final class PresetStore: PresetResolving, @unchecked Sendable {
         self.fileURL = fileURL
         self.currentDefault = Preset(name: "default", promptTemplate: Self.defaultPromptTemplate)
         var initWarning: PresetStoreError? = nil
+        var initSnippetWarning: PresetStoreError? = nil
 
         if materializeIfMissing {
             try? Self.ensureDirectory(for: fileURL)
@@ -166,12 +191,16 @@ final class PresetStore: PresetResolving, @unchecked Sendable {
             self.currentDefault = loaded.defaultPreset
             self.currentOverrides = loaded.overrides
             self.currentVocabulary = loaded.vocabulary
+            self.currentSnippets = loaded.snippets
             self.currentSchemaVersion = loaded.schemaVersion
             initWarning = loaded.vocabularyWarning
+            initSnippetWarning = loaded.snippetsWarning
         }
         self.initialVocabularyWarning = initWarning
+        self.initialSnippetsWarning = initSnippetWarning
         // Prime dedupe so the next reload of the same broken file stays quiet.
         self.lastSurfacedVocabWarning = initWarning
+        self.lastSurfacedSnippetsWarning = initSnippetWarning
     }
 
     func defaultPreset() -> Preset {
@@ -194,6 +223,14 @@ final class PresetStore: PresetResolving, @unchecked Sendable {
     func vocabulary() -> [VocabEntry] {
         lock.lock(); defer { lock.unlock() }
         return currentVocabulary
+    }
+
+    /// Current snippets map (name → expansion). Empty when no `snippets` key
+    /// is present, the map is empty, or the last load had a snippets bounds
+    /// violation.
+    func snippets() -> [String: String] {
+        lock.lock(); defer { lock.unlock() }
+        return currentSnippets
     }
 
     /// Current on-disk `$schemaVersion`. Missing / unparseable on disk = 0.
@@ -284,16 +321,26 @@ final class PresetStore: PresetResolving, @unchecked Sendable {
         currentDefault = loaded.defaultPreset
         currentOverrides = loaded.overrides
         currentVocabulary = loaded.vocabulary
+        currentSnippets = loaded.snippets
         currentSchemaVersion = loaded.schemaVersion
 
-        let toSurface: PresetStoreError?
+        let vocabToSurface: PresetStoreError?
         if let w = loaded.vocabularyWarning, w.kind != lastSurfacedVocabWarning?.kind {
-            toSurface = w
+            vocabToSurface = w
         } else {
-            toSurface = nil
+            vocabToSurface = nil
         }
         lastSurfacedVocabWarning = loaded.vocabularyWarning
-        return ReloadOutcome(vocabularyWarning: toSurface)
+
+        let snippetsToSurface: PresetStoreError?
+        if let w = loaded.snippetsWarning, w.kind != lastSurfacedSnippetsWarning?.kind {
+            snippetsToSurface = w
+        } else {
+            snippetsToSurface = nil
+        }
+        lastSurfacedSnippetsWarning = loaded.snippetsWarning
+
+        return ReloadOutcome(vocabularyWarning: vocabToSurface, snippetsWarning: snippetsToSurface)
     }
 
     // MARK: - Vocabulary helpers
@@ -346,6 +393,111 @@ final class PresetStore: PresetResolving, @unchecked Sendable {
         vocab.reduce(0) { $0 + $1.phonetic.utf8.count + $1.canonical.utf8.count }
     }
 
+    // MARK: - Snippets
+
+    /// Snippets bounds. The triggering pattern is `insert <name>` where
+    /// `<name>` is a single token of `[A-Za-z0-9_-]+`; names are matched
+    /// case-insensitively but stored as-written so banners show the user's
+    /// own spelling.
+    static let maxSnippets = 20
+    static let maxSnippetNameBytes = 32
+    static let maxSnippetValueBytes = 512
+    static let maxSnippetsTotalBytes = 8 * 1024
+
+    /// Valid name pattern. Restricting to `[A-Za-z0-9_-]+` prevents users
+    /// from authoring names like "the" or "and" that would expand on every
+    /// dictation; it also keeps the regex pattern straightforward (no quoting
+    /// edge cases in the trigger).
+    static func isValidSnippetName(_ name: String) -> Bool {
+        guard !name.isEmpty else { return false }
+        let valid = CharacterSet(charactersIn:
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-"
+        )
+        return name.unicodeScalars.allSatisfy { valid.contains($0) }
+    }
+
+    /// Expand `insert <name>` triggers in `text` to the corresponding snippet
+    /// value. Case-insensitive on the name. Applied PRE-cleanup so the
+    /// cleanup LLM can adjust grammar around the inserted text. Returns the
+    /// input unchanged if `snippets` is empty.
+    ///
+    /// Triggers anchor on `\binsert\s+<name>\b` (word boundaries around both
+    /// "insert" and the name) so e.g. "I want to insert signature into the
+    /// doc" doesn't trip on "signa" → "signa text".
+    static func expandSnippets(in text: String, snippets: [String: String]) -> String {
+        guard !snippets.isEmpty, !text.isEmpty else { return text }
+        // Longest-name-first guards against "sig" eating "sig_long" when
+        // both are user-defined.
+        let sorted = snippets.keys.sorted { $0.utf8.count > $1.utf8.count }
+        var result = text
+        for name in sorted {
+            guard let value = snippets[name] else { continue }
+            let pattern = #"\binsert\s+"# + NSRegularExpression.escapedPattern(for: name) + #"\b"#
+            guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
+                continue
+            }
+            let template = NSRegularExpression.escapedTemplate(for: value)
+            let range = NSRange(result.startIndex..., in: result)
+            let before = result
+            result = regex.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: template)
+            if result != before {
+                Log.presets.info("snippet expanded: name=\(name, privacy: .public)")
+            }
+        }
+        return result
+    }
+
+    /// Sum of all `(name + value)` UTF-8 bytes across all snippets. JSON
+    /// overhead is not billed (matches the vocabulary accounting model).
+    static func snippetsBilledBytes(_ snippets: [String: String]) -> Int {
+        snippets.reduce(0) { $0 + $1.key.utf8.count + $1.value.utf8.count }
+    }
+
+    /// First-violation-wins parser. Schema: object of `String → String` pairs.
+    /// Both keys and values are required to be non-empty after trim. Wrong-
+    /// type top-level value (string, array, number) → `.snippetsMalformed`.
+    /// Wrong-type value inside the object → `.snippetsMalformed`.
+    private static func parseSnippets(_ raw: Any) -> (snippets: [String: String], warning: PresetStoreError?) {
+        if raw is NSNull { return ([:], nil) }
+        guard let dict = raw as? [String: Any] else {
+            return ([:], .snippetsMalformed)
+        }
+        if dict.count > maxSnippets {
+            return ([:], .tooManySnippets(count: dict.count))
+        }
+        var out: [String: String] = [:]
+        for (rawName, rawValue) in dict {
+            let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let valueString = rawValue as? String else {
+                return ([:], .snippetsMalformed)
+            }
+            let value = valueString.trimmingCharacters(in: .whitespacesAndNewlines)
+            if name.isEmpty || value.isEmpty {
+                return ([:], .snippetsMalformed)
+            }
+            if !isValidSnippetName(name) {
+                return ([:], .snippetNameInvalid)
+            }
+            if name.utf8.count > maxSnippetNameBytes {
+                return ([:], .snippetEntryTooLong(bytes: name.utf8.count))
+            }
+            if value.utf8.count > maxSnippetValueBytes {
+                return ([:], .snippetEntryTooLong(bytes: value.utf8.count))
+            }
+            // Names collide case-insensitively at expansion time, so reject
+            // duplicate names early to keep precedence deterministic.
+            if out.contains(where: { $0.key.caseInsensitiveCompare(name) == .orderedSame }) {
+                return ([:], .snippetsMalformed)
+            }
+            out[name] = value
+        }
+        let billed = snippetsBilledBytes(out)
+        if billed > maxSnippetsTotalBytes {
+            return ([:], .snippetsTooLarge(bytes: billed))
+        }
+        return (out, nil)
+    }
+
     // MARK: - Disk
 
     private struct LoadedPresets {
@@ -353,6 +505,8 @@ final class PresetStore: PresetResolving, @unchecked Sendable {
         let overrides: [String: Preset]
         let vocabulary: [VocabEntry]
         let vocabularyWarning: PresetStoreError?
+        let snippets: [String: String]
+        let snippetsWarning: PresetStoreError?
         let schemaVersion: Int
     }
 
@@ -527,11 +681,21 @@ final class PresetStore: PresetResolving, @unchecked Sendable {
             (vocabulary, vocabularyWarning) = ([], nil)
         }
 
+        // Snippets — partial-failure with same semantics as vocabulary.
+        let (snippets, snippetsWarning): ([String: String], PresetStoreError?)
+        if let rawSnippets = dict["snippets"] {
+            (snippets, snippetsWarning) = parseSnippets(rawSnippets)
+        } else {
+            (snippets, snippetsWarning) = ([:], nil)
+        }
+
         return LoadedPresets(
             defaultPreset: Preset(name: "default", promptTemplate: defaultTemplate),
             overrides: overrides,
             vocabulary: vocabulary,
             vocabularyWarning: vocabularyWarning,
+            snippets: snippets,
+            snippetsWarning: snippetsWarning,
             schemaVersion: schemaVersion
         )
     }
