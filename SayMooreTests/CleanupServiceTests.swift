@@ -90,4 +90,67 @@ final class CleanupServiceTests: XCTestCase {
             XCTFail("wrong error: \(error)")
         }
     }
+
+    // MARK: - Response validation (Slice 12 P0 fix)
+    //
+    // Whisper occasionally hands the cleanup LLM input that triggers placeholder
+    // or meta-commentary responses ("N/A", "nothing to clean here"). Those must
+    // throw .cleanupFailed so PipelineCoordinator falls back to pasting raw.
+
+    private func expectCleanupFailed(_ response: String, raw: String, file: StaticString = #filePath, line: UInt = #line) async {
+        let fake = FakeOllama()
+        fake.nextResult = .success(response)
+        let svc = CleanupService(client: fake, presets: StubPresets())
+        do {
+            _ = try await svc.clean(raw, bundleID: nil)
+            XCTFail("expected cleanupFailed for response \"\(response)\"", file: file, line: line)
+        } catch let e as SayMooreError {
+            switch e {
+            case .cleanupFailed: break
+            default: XCTFail("expected .cleanupFailed, got \(e)", file: file, line: line)
+            }
+        } catch {
+            XCTFail("wrong error: \(error)", file: file, line: line)
+        }
+    }
+
+    func testRejectsNAResponse() async {
+        await expectCleanupFailed("N/A", raw: "tell mom i'll call her after work")
+    }
+
+    func testRejectsNAResponseWithPunctuation() async {
+        await expectCleanupFailed("N/A.", raw: "tell mom i'll call her after work")
+    }
+
+    func testRejectsMetaCommentaryResponse() async {
+        await expectCleanupFailed("nothing to clean here", raw: "i had a really good time tonight thank you for everything")
+    }
+
+    func testRejectsEmptyResponse() async {
+        await expectCleanupFailed("   \n  ", raw: "hi there everyone")
+    }
+
+    func testRejectsLengthCollapse() async {
+        // Input 100+ chars, output 5 chars → collapse.
+        let raw = String(repeating: "this is a long dictation that the cleanup should not collapse. ", count: 2)
+        await expectCleanupFailed("ok.", raw: raw)
+    }
+
+    func testAcceptsShortValidResponse() async throws {
+        // Short raw + short clean must NOT trip the length-collapse floor.
+        let fake = FakeOllama()
+        fake.nextResult = .success("Yes.")
+        let svc = CleanupService(client: fake, presets: StubPresets())
+        let out = try await svc.clean("Yes", bundleID: nil)
+        XCTAssertEqual(out, "Yes.")
+    }
+
+    func testAcceptsLegitimateShortening() async throws {
+        // Raw 30 chars, cleaned 25 chars — within the 20% floor.
+        let fake = FakeOllama()
+        fake.nextResult = .success("Confirm the package was delivered?")
+        let svc = CleanupService(client: fake, presets: StubPresets())
+        let out = try await svc.clean("Can you confirm that the package was delivered?", bundleID: nil)
+        XCTAssertEqual(out, "Confirm the package was delivered?")
+    }
 }
