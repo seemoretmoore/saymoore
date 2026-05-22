@@ -72,6 +72,17 @@ final class MenuBarController: NSObject {
         menu.addItem(.separator())
         menu.addItem(updatesItem)
 
+        let info = Bundle.main.infoDictionary
+        let short = info?["CFBundleShortVersionString"] as? String ?? "?"
+        let build = info?["CFBundleVersion"] as? String ?? "?"
+        let versionItem = NSMenuItem(
+            title: "Version \(short) (build \(build))",
+            action: nil,
+            keyEquivalent: ""
+        )
+        versionItem.isEnabled = false
+        menu.addItem(versionItem)
+
         menu.addItem(.separator())
         menu.addItem(
             withTitle: "Quit SayMoore",
