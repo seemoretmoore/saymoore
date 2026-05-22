@@ -406,9 +406,15 @@ final class PipelineCoordinator {
 
         let transcript: Transcript
         do {
+            // v1.1: bias whisper acoustic recognition toward known proper nouns
+            // (vocabulary canonicals) so terms like "FSEventStream" / "Qwen"
+            // transcribe correctly the first time, before the deterministic
+            // post-substitution path even runs.
+            let bias = PresetStore.biasHint(from: presets.vocabulary())
             transcript = try await transcription.transcribe(
                 samples: samples,
-                sampleRate: 16_000
+                sampleRate: 16_000,
+                initialPrompt: bias
             )
         } catch {
             Log.transcribe.error("transcription failed: \(String(describing: error), privacy: .public)")

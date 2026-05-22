@@ -393,6 +393,24 @@ final class PresetStore: PresetResolving, @unchecked Sendable {
         vocab.reduce(0) { $0 + $1.phonetic.utf8.count + $1.canonical.utf8.count }
     }
 
+    /// Comma-joined canonical forms suitable for whisper.cpp's
+    /// `initial_prompt` acoustic bias. Returns `nil` when the vocabulary is
+    /// empty so callers can pass `nil` straight through to the transcriber.
+    /// Deduplicates canonicals (multiple phonetics can map to the same
+    /// canonical, e.g. "Quinn"+"Clem" → "Qwen") so the bias hint stays
+    /// short and on-topic.
+    static func biasHint(from vocab: [VocabEntry]) -> String? {
+        guard !vocab.isEmpty else { return nil }
+        var seen = Set<String>()
+        var unique: [String] = []
+        for entry in vocab {
+            if seen.insert(entry.canonical).inserted {
+                unique.append(entry.canonical)
+            }
+        }
+        return unique.joined(separator: ", ")
+    }
+
     // MARK: - Snippets
 
     /// Snippets bounds. The triggering pattern is `insert <name>` where

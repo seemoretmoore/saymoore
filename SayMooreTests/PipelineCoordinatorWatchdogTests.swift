@@ -39,7 +39,7 @@ final class PipelineCoordinatorWatchdogTests: XCTestCase {
     /// Transcription service that hangs forever (until cancelled), simulating a
     /// stuck pipeline so the watchdog must fire.
     private final class StuckTranscription: TranscriptionService, @unchecked Sendable {
-        func transcribe(samples: [Float], sampleRate: Int) async throws -> Transcript {
+        func transcribe(samples: [Float], sampleRate: Int, initialPrompt: String?) async throws -> Transcript {
             try await Task.sleep(nanoseconds: 10_000_000_000) // 10s
             return Transcript(text: "never", averageNoSpeechProb: 0)
         }

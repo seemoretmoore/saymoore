@@ -30,10 +30,11 @@ final class PipelineCoordinatorCleanupTests: XCTestCase {
     }
     private struct StubPresets: PresetResolving {
         var snippetMap: [String: String] = [:]
+        var vocab: [VocabEntry] = []
         func preset(for bundleID: String?) -> Preset {
             Preset(name: "stub", promptTemplate: "{{transcript}}")
         }
-        func vocabulary() -> [VocabEntry] { [] }
+        func vocabulary() -> [VocabEntry] { vocab }
         func snippets() -> [String: String] { snippetMap }
     }
     private let stubPresets = StubPresets()
@@ -218,5 +219,52 @@ final class PipelineCoordinatorCleanupTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(80))
         XCTAssertEqual(cleanup.lastRaw, "no snippet keyword present here",
                        "no expansion when no `insert <name>` trigger present")
+    }
+
+    // MARK: - Whisper initial_prompt biasing (v1.1)
+
+    /// Like makeRig but exposes the FakeTranscriptionService so callers can
+    /// inspect what bias hint was passed through to whisper.
+    private func makeBiasingRig(presets: StubPresets) -> (PipelineCoordinator, FakeTranscriptionService) {
+        let rec = FakeRecorder()
+        let trans = FakeTranscriptionService()
+        trans.nextResult = .success(Transcript(text: "fake", averageNoSpeechProb: 0))
+        let pb = FakePasteboard()
+        let kb = FakeKeyboard()
+        let fm = FakeFrontmost()
+        fm.bundleID = "com.apple.TextEdit"
+        let paste = PasteService(pasteboard: pb, keyboard: kb, frontmost: fm, restoreDelay: .zero)
+        let coord = PipelineCoordinator(
+            appState: AppState(),
+            recorder: rec,
+            transcription: trans,
+            paste: paste,
+            presets: presets,
+            cleanup: FakeCleanup()
+        )
+        return (coord, trans)
+    }
+
+    func testBiasHintIsNilWhenVocabularyEmpty() async throws {
+        var stub = StubPresets()
+        stub.vocab = []
+        let (coord, trans) = makeBiasingRig(presets: stub)
+        coord.toggle(bundleID: "com.apple.TextEdit")
+        coord.toggle(bundleID: nil)
+        try await Task.sleep(for: .milliseconds(80))
+        XCTAssertNil(trans.lastInitialPrompt, "empty vocab must yield nil bias")
+    }
+
+    func testBiasHintPassedToWhisperWhenVocabularyHasEntries() async throws {
+        var stub = StubPresets()
+        stub.vocab = [
+            VocabEntry(phonetic: "Quinn",    canonical: "Qwen"),
+            VocabEntry(phonetic: "Swift UI", canonical: "SwiftUI"),
+        ]
+        let (coord, trans) = makeBiasingRig(presets: stub)
+        coord.toggle(bundleID: "com.apple.TextEdit")
+        coord.toggle(bundleID: nil)
+        try await Task.sleep(for: .milliseconds(80))
+        XCTAssertEqual(trans.lastInitialPrompt, "Qwen, SwiftUI")
     }
 }

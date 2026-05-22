@@ -1,8 +1,18 @@
 import Foundation
 
 protocol TranscriptionService: Sendable {
-    /// Transcribe 16 kHz mono float samples.
-    func transcribe(samples: [Float], sampleRate: Int) async throws -> Transcript
+    /// Transcribe 16 kHz mono float samples. `initialPrompt` is an optional
+    /// whisper.cpp `initial_prompt` bias hint — typically a comma-joined list
+    /// of proper-noun terms (the canonical forms from `PresetStore.vocabulary`)
+    /// so acoustic recognition is biased toward them. Nil / empty = no bias.
+    func transcribe(samples: [Float], sampleRate: Int, initialPrompt: String?) async throws -> Transcript
+}
+
+extension TranscriptionService {
+    /// Convenience overload for callers / tests that don't care about biasing.
+    func transcribe(samples: [Float], sampleRate: Int) async throws -> Transcript {
+        try await transcribe(samples: samples, sampleRate: sampleRate, initialPrompt: nil)
+    }
 }
 
 #if canImport(whisper)
@@ -33,12 +43,12 @@ final class WhisperTranscriptionService: TranscriptionService, @unchecked Sendab
         }
     }
 
-    func transcribe(samples: [Float], sampleRate: Int) async throws -> Transcript {
+    func transcribe(samples: [Float], sampleRate: Int, initialPrompt: String?) async throws -> Transcript {
         precondition(sampleRate == 16_000, "WhisperTranscriptionService requires 16kHz")
         return try await withCheckedThrowingContinuation { cont in
             serial.async { [self] in
                 do {
-                    let result = try self.transcribeSync(samples: samples)
+                    let result = try self.transcribeSync(samples: samples, initialPrompt: initialPrompt)
                     cont.resume(returning: result)
                 } catch {
                     cont.resume(throwing: error)
@@ -47,7 +57,7 @@ final class WhisperTranscriptionService: TranscriptionService, @unchecked Sendab
         }
     }
 
-    private func transcribeSync(samples: [Float]) throws -> Transcript {
+    private func transcribeSync(samples: [Float], initialPrompt: String?) throws -> Transcript {
         if ctx == nil {
             lock.lock()
             guard !wasFreed else {
@@ -87,6 +97,17 @@ final class WhisperTranscriptionService: TranscriptionService, @unchecked Sendab
         fparams.language = UnsafePointer(lang)
         defer { free(lang) }
 
+        // Optional initial_prompt bias. whisper.cpp keeps the pointer; we
+        // strdup so the C-string lifetime extends through the whisper_full
+        // call. Empty strings are treated as no-bias (skipped).
+        var promptCString: UnsafeMutablePointer<CChar>? = nil
+        if let bias = initialPrompt, !bias.isEmpty {
+            promptCString = bias.withCString { strdup($0) }
+            fparams.initial_prompt = UnsafePointer(promptCString)
+            Log.transcribe.info("initial_prompt set (\(bias.utf8.count, privacy: .public) bytes)")
+        }
+        defer { if let p = promptCString { free(p) } }
+
         let status = samples.withUnsafeBufferPointer { buf -> Int32 in
             whisper_full(localCtx, fparams, buf.baseAddress, Int32(buf.count))
         }
@@ -115,7 +136,7 @@ final class WhisperTranscriptionService: TranscriptionService, @unchecked Sendab
 final class WhisperTranscriptionService: TranscriptionService {
     private let modelPath: String
     init(modelPath: String) { self.modelPath = modelPath }
-    func transcribe(samples: [Float], sampleRate: Int) async throws -> Transcript {
+    func transcribe(samples: [Float], sampleRate: Int, initialPrompt: String?) async throws -> Transcript {
         Log.transcribe.error("whisper.xcframework not linked — run scripts/setup-whisper.sh and re-add to project.yml")
         throw SayMooreError.modelMissing
     }
@@ -125,8 +146,10 @@ final class WhisperTranscriptionService: TranscriptionService {
 final class FakeTranscriptionService: TranscriptionService, @unchecked Sendable {
     var nextResult: Result<Transcript, Error> = .success(Transcript(text: "fake transcript", averageNoSpeechProb: 0))
     private(set) var calls = 0
-    func transcribe(samples: [Float], sampleRate: Int) async throws -> Transcript {
+    private(set) var lastInitialPrompt: String?
+    func transcribe(samples: [Float], sampleRate: Int, initialPrompt: String?) async throws -> Transcript {
         calls += 1
+        lastInitialPrompt = initialPrompt
         return try nextResult.get()
     }
 }
