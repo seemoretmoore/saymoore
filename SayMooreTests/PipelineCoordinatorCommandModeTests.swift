@@ -33,6 +33,7 @@ final class PipelineCoordinatorCommandModeTests: XCTestCase {
             Preset(name: "stub", promptTemplate: "{{transcript}}")
         }
         func vocabulary() -> [VocabEntry] { [] }
+        func snippets() -> [String: String] { [:] }
     }
     private final class FakeCleanup: TranscriptCleaning, @unchecked Sendable {
         var nextResult: Result<String, Error> = .success("CLEANED")

@@ -33,6 +33,7 @@ final class PipelineCoordinatorWatchdogTests: XCTestCase {
             Preset(name: "stub", promptTemplate: "{{transcript}}")
         }
         func vocabulary() -> [VocabEntry] { [] }
+        func snippets() -> [String: String] { [:] }
     }
 
     /// Transcription service that hangs forever (until cancelled), simulating a

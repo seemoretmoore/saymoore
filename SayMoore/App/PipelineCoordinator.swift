@@ -553,7 +553,13 @@ final class PipelineCoordinator {
     }
 
     private func maybeCleanup(raw: String) async -> String {
-        let cleaned = await runCleanup(raw: raw)
+        // Snippets expand BEFORE the LLM so cleanup can adjust grammar around
+        // the inserted value. Applied on every dictation path (fast-path
+        // skips cleanup, but it still gets snippet expansion via this hop;
+        // fallback-to-raw paths return the post-snippet raw text). Command
+        // Mode skips this entirely — `runCommandMode` is a separate branch.
+        let withSnippets = PresetStore.expandSnippets(in: raw, snippets: presets.snippets())
+        let cleaned = await runCleanup(raw: withSnippets)
         // Deterministic phonetic→canonical substitution. Applies on every path
         // (LLM-cleaned, fast-path, fallback-to-raw) so vocabulary takes effect
         // even when the cleanup LLM times out or is unreachable.

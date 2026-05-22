@@ -14,5 +14,9 @@
     {"phonetic": "Quinn", "canonical": "Qwen"},
     {"phonetic": "Clem", "canonical": "Qwen"},
     {"phonetic": "Swift UI", "canonical": "SwiftUI"}
-  ]
+  ],
+  "snippets": {
+    "sig": "— seemoretmoore",
+    "email": "noreply@saymoore.local"
+  }
 }

@@ -771,6 +771,146 @@ final class PresetStoreTests: XCTestCase {
         XCTAssertNotNil(overrides?["com.tinyspeck.slackmacgap"])
     }
 
+    // MARK: - Snippets (v1.1)
+
+    func testSnippetsLoadFromDisk() throws {
+        let url = fileURL()
+        try write(#"{"default":"X{{transcript}}","snippets":{"sig":"— seemoretmoore","email":"a@b.com"}}"#, to: url)
+        let store = PresetStore(fileURL: url, materializeIfMissing: false)
+        XCTAssertEqual(store.snippets(), ["sig": "— seemoretmoore", "email": "a@b.com"])
+    }
+
+    func testSnippetsEmptyWhenAbsent() throws {
+        let url = fileURL()
+        try write(#"{"default":"X{{transcript}}"}"#, to: url)
+        let store = PresetStore(fileURL: url, materializeIfMissing: false)
+        XCTAssertEqual(store.snippets(), [:])
+    }
+
+    func testSnippetsRejectsTooManyEntries() throws {
+        let url = fileURL()
+        var pairs: [String] = []
+        for i in 0..<(PresetStore.maxSnippets + 1) {
+            pairs.append("\"k\(i)\":\"v\"")
+        }
+        let json = "{\"default\":\"X{{transcript}}\",\"snippets\":{\(pairs.joined(separator: ","))}}"
+        try write(json, to: url)
+        let store = PresetStore(fileURL: url, materializeIfMissing: false)
+        XCTAssertEqual(store.snippets(), [:])
+        switch store.initialSnippetsWarning {
+        case .tooManySnippets: break
+        default: XCTFail("expected .tooManySnippets, got \(String(describing: store.initialSnippetsWarning))")
+        }
+    }
+
+    func testSnippetsRejectsInvalidName() throws {
+        let url = fileURL()
+        // "the snippet" has a space → invalid name
+        try write(#"{"default":"X{{transcript}}","snippets":{"the snippet":"v"}}"#, to: url)
+        let store = PresetStore(fileURL: url, materializeIfMissing: false)
+        XCTAssertEqual(store.snippets(), [:])
+        switch store.initialSnippetsWarning {
+        case .snippetNameInvalid: break
+        default: XCTFail("expected .snippetNameInvalid, got \(String(describing: store.initialSnippetsWarning))")
+        }
+    }
+
+    func testSnippetsRejectsOversizeValue() throws {
+        let url = fileURL()
+        let bigValue = String(repeating: "x", count: PresetStore.maxSnippetValueBytes + 1)
+        try write(#"{"default":"X{{transcript}}","snippets":{"k":"\#(bigValue)"}}"#, to: url)
+        let store = PresetStore(fileURL: url, materializeIfMissing: false)
+        XCTAssertEqual(store.snippets(), [:])
+        switch store.initialSnippetsWarning {
+        case .snippetEntryTooLong: break
+        default: XCTFail("expected .snippetEntryTooLong")
+        }
+    }
+
+    func testSnippetsRejectsArrayShape() throws {
+        let url = fileURL()
+        try write(#"{"default":"X{{transcript}}","snippets":["bad","shape"]}"#, to: url)
+        let store = PresetStore(fileURL: url, materializeIfMissing: false)
+        XCTAssertEqual(store.snippets(), [:])
+        switch store.initialSnippetsWarning {
+        case .snippetsMalformed: break
+        default: XCTFail("expected .snippetsMalformed")
+        }
+    }
+
+    func testSnippetsAreOptionalAndNullSafe() throws {
+        let url = fileURL()
+        try write(#"{"default":"X{{transcript}}","snippets":null}"#, to: url)
+        let store = PresetStore(fileURL: url, materializeIfMissing: false)
+        XCTAssertEqual(store.snippets(), [:])
+        XCTAssertNil(store.initialSnippetsWarning, "explicit null must not be a warning")
+    }
+
+    // MARK: - expandSnippets
+
+    func testExpandSnippetsReplacesInsertTrigger() {
+        let out = PresetStore.expandSnippets(
+            in: "thanks insert sig please",
+            snippets: ["sig": "— seemoretmoore"]
+        )
+        XCTAssertEqual(out, "thanks — seemoretmoore please")
+    }
+
+    func testExpandSnippetsCaseInsensitiveOnName() {
+        let out = PresetStore.expandSnippets(
+            in: "Hi please Insert SIG to message",
+            snippets: ["sig": "— seemoretmoore"]
+        )
+        XCTAssertEqual(out, "Hi please — seemoretmoore to message")
+    }
+
+    func testExpandSnippetsDoesNotMatchInsideWords() {
+        // "insertsig" without a space → no expansion (word boundary check)
+        let out = PresetStore.expandSnippets(
+            in: "the insertsig token",
+            snippets: ["sig": "— seemoretmoore"]
+        )
+        XCTAssertEqual(out, "the insertsig token")
+    }
+
+    func testExpandSnippetsRequiresInsertKeyword() {
+        // Bare snippet name without "insert" → no expansion
+        let out = PresetStore.expandSnippets(
+            in: "the sig is here",
+            snippets: ["sig": "— seemoretmoore"]
+        )
+        XCTAssertEqual(out, "the sig is here")
+    }
+
+    func testExpandSnippetsLongestNameWinsFirst() {
+        // "sig_long" must be tried before "sig" so "insert sig_long" doesn't
+        // expand to "— seemoretmoore_long".
+        let out = PresetStore.expandSnippets(
+            in: "use insert sig_long today",
+            snippets: ["sig": "— seemoretmoore", "sig_long": "— SayMoore contributors, MD"]
+        )
+        XCTAssertEqual(out, "use — SayMoore contributors, MD today")
+    }
+
+    func testExpandSnippetsEmptyMapIsNoOp() {
+        let out = PresetStore.expandSnippets(in: "no snippets here", snippets: [:])
+        XCTAssertEqual(out, "no snippets here")
+    }
+
+    func testIsValidSnippetNameAcceptsAlnumAndUnderscoreAndDash() {
+        XCTAssertTrue(PresetStore.isValidSnippetName("sig"))
+        XCTAssertTrue(PresetStore.isValidSnippetName("sig_long"))
+        XCTAssertTrue(PresetStore.isValidSnippetName("sig-1"))
+        XCTAssertTrue(PresetStore.isValidSnippetName("ABC123"))
+    }
+
+    func testIsValidSnippetNameRejectsSpaceDotEmoji() {
+        XCTAssertFalse(PresetStore.isValidSnippetName(""))
+        XCTAssertFalse(PresetStore.isValidSnippetName("two words"))
+        XCTAssertFalse(PresetStore.isValidSnippetName("sig.dot"))
+        XCTAssertFalse(PresetStore.isValidSnippetName("sig😀"))
+    }
+
     func testBundledExampleJsonHasSchemaVersion() throws {
         // Drift test: bundled JSON must always carry a $schemaVersion that
         // matches the in-code constant. If you bump bundledSchemaVersion, you
