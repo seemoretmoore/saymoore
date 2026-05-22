@@ -54,6 +54,14 @@ final class MenuBarController: NSObject {
         reloadItem.target = self
         menu.addItem(reloadItem)
 
+        let upgradeItem = NSMenuItem(
+            title: "Check for Preset Updates…",
+            action: #selector(checkPresetUpdatesTapped),
+            keyEquivalent: ""
+        )
+        upgradeItem.target = self
+        menu.addItem(upgradeItem)
+
         let debugLogItem = NSMenuItem(
             title: "Open Debug Log in Finder",
             action: #selector(openDebugLogTapped),
@@ -116,6 +124,20 @@ final class MenuBarController: NSObject {
                 title: "SayMoore",
                 body: "Presets reloaded."
             )
+        }
+    }
+
+    @objc private func checkPresetUpdatesTapped() {
+        switch presets.upgradeStatus() {
+        case .upToDate:
+            let alert = NSAlert()
+            alert.messageText = "Presets are up to date"
+            alert.informativeText = "On-disk presets match the bundled baseline (v\(PresetStore.bundledSchemaVersion))."
+            alert.alertStyle = .informational
+            alert.runModal()
+        case .upgradeAvailable(let disk, let bundled):
+            NSApp.delegate.flatMap { $0 as? AppDelegate }?
+                .promptPresetUpgrade(diskVersion: disk, bundledVersion: bundled)
         }
     }
 

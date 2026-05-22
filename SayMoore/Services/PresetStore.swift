@@ -59,6 +59,28 @@ protocol PresetResolving: Sendable {
     func vocabulary() -> [VocabEntry]
 }
 
+/// Result of comparing the bundled `presets.example.json` schema version against
+/// the on-disk `presets.json` version. `upgradeAvailable` fires when bundled
+/// prompts have been iterated post-release; without it, every Sparkle prompt
+/// fix would be dead code for existing users (see v1.1 plan §2).
+enum PresetUpgradeStatus: Equatable {
+    case upToDate
+    case upgradeAvailable(diskVersion: Int, bundledVersion: Int)
+}
+
+/// User-chosen response to an upgrade prompt.
+/// - `.overwrite`: replace the entire on-disk file with the bundled example
+///   (loses any custom overrides + vocabulary the user added).
+/// - `.merge`: replace only the `default` template + bump `$schemaVersion`;
+///   preserve user `overrides` and `vocabulary`. Default recommendation.
+/// - `.dismiss`: leave prompts alone, but bump on-disk `$schemaVersion` so
+///   we don't nag again until the next bundled bump.
+enum PresetUpgradeStrategy: Sendable {
+    case overwrite
+    case merge
+    case dismiss
+}
+
 /// Outcome from `reload()`. `vocabularyWarning` is non-nil only on *transitions*
 /// — first appearance of a warning, or a change to a different warning. Same-
 /// discriminant repeats and recoveries are silenced so menu/FS reloads don't spam.
@@ -67,6 +89,12 @@ struct ReloadOutcome {
 }
 
 final class PresetStore: PresetResolving, @unchecked Sendable {
+    /// Version of the bundled `presets.example.json` payload. Bump every time
+    /// the bundled `default` template or override prompts change in a way
+    /// existing users should see. Compared against the on-disk `$schemaVersion`
+    /// field at launch via `upgradeStatus()`. Missing field on disk = 0.
+    static let bundledSchemaVersion = 1
+
     static let defaultPromptTemplate = """
     You are a transcription cleanup assistant. The user dictated text that was transcribed by Whisper.
     Your job: remove filler words (uh, um, like, you know), fix obvious self-corrections (e.g., "X — no, Y" → "Y"), fix punctuation and capitalization so the text reads as natural written English, and produce natural-sounding text in the user's voice.
@@ -101,6 +129,7 @@ final class PresetStore: PresetResolving, @unchecked Sendable {
     private var currentDefault: Preset
     private var currentOverrides: [String: Preset] = [:]
     private var currentVocabulary: [VocabEntry] = []
+    private var currentSchemaVersion: Int = 0
 
     /// One-shot snapshot of any vocabulary warning surfaced during `init`.
     /// Read once by `AppDelegate.applicationDidFinishLaunching` to post a
@@ -137,6 +166,7 @@ final class PresetStore: PresetResolving, @unchecked Sendable {
             self.currentDefault = loaded.defaultPreset
             self.currentOverrides = loaded.overrides
             self.currentVocabulary = loaded.vocabulary
+            self.currentSchemaVersion = loaded.schemaVersion
             initWarning = loaded.vocabularyWarning
         }
         self.initialVocabularyWarning = initWarning
@@ -166,6 +196,69 @@ final class PresetStore: PresetResolving, @unchecked Sendable {
         return currentVocabulary
     }
 
+    /// Current on-disk `$schemaVersion`. Missing / unparseable on disk = 0.
+    func diskSchemaVersion() -> Int {
+        lock.lock(); defer { lock.unlock() }
+        return currentSchemaVersion
+    }
+
+    /// Compare on-disk schema version against the bundled baseline.
+    /// `upgradeAvailable` when bundled > disk; otherwise `upToDate`.
+    /// Disk > bundled is also reported as `upToDate` (user is somehow ahead;
+    /// don't downgrade them).
+    func upgradeStatus() -> PresetUpgradeStatus {
+        let disk = diskSchemaVersion()
+        let bundled = Self.bundledSchemaVersion
+        if disk < bundled {
+            return .upgradeAvailable(diskVersion: disk, bundledVersion: bundled)
+        }
+        return .upToDate
+    }
+
+    /// Apply a chosen `PresetUpgradeStrategy`. Writes a new `presets.json` to
+    /// disk; the existing `PresetWatcher` FSEvents path picks it up and the
+    /// next `reload()` swaps in-memory state. Callers can `try reload()`
+    /// inline if they need synchronous state.
+    func applyUpgrade(_ strategy: PresetUpgradeStrategy) throws {
+        switch strategy {
+        case .overwrite:
+            try Self.materializeBaseline(at: fileURL)
+        case .merge:
+            try writeMergedUpgrade()
+        case .dismiss:
+            try writeVersionBumpOnly()
+        }
+    }
+
+    /// Merge strategy: keep user `overrides` + `vocabulary` byte-identical to
+    /// what's on disk; replace `default` with the bundled baseline; stamp
+    /// `$schemaVersion = bundledSchemaVersion`. If the bundled resource is
+    /// unavailable (test contexts), fall back to the hardcoded template.
+    private func writeMergedUpgrade() throws {
+        // Re-read current disk state so we merge against the latest bytes,
+        // not in-memory snapshots that could lag the file.
+        let onDisk: [String: Any] = (try? Self.readRawJSON(at: fileURL)) ?? [:]
+        let bundled: [String: Any] = Self.readBundledRawJSON() ?? [
+            "default": Self.defaultPromptTemplate
+        ]
+
+        var merged: [String: Any] = onDisk
+        merged["$schemaVersion"] = Self.bundledSchemaVersion
+        if let bundledDefault = bundled["default"] as? String {
+            merged["default"] = bundledDefault
+        }
+        try Self.writeJSON(merged, to: fileURL)
+    }
+
+    /// Dismiss strategy: leave templates / overrides / vocabulary untouched,
+    /// just bump `$schemaVersion` so we stop nagging until the NEXT bundled
+    /// bump.
+    private func writeVersionBumpOnly() throws {
+        var onDisk: [String: Any] = (try? Self.readRawJSON(at: fileURL)) ?? [:]
+        onDisk["$schemaVersion"] = Self.bundledSchemaVersion
+        try Self.writeJSON(onDisk, to: fileURL)
+    }
+
     /// Re-materialize `presets.json` if missing. Idempotent — no-op when the
     /// file already exists. Used by the "Edit Presets…" menu item to recover
     /// gracefully when the user (or a sync tool) deletes the file post-launch.
@@ -191,6 +284,7 @@ final class PresetStore: PresetResolving, @unchecked Sendable {
         currentDefault = loaded.defaultPreset
         currentOverrides = loaded.overrides
         currentVocabulary = loaded.vocabulary
+        currentSchemaVersion = loaded.schemaVersion
 
         let toSurface: PresetStoreError?
         if let w = loaded.vocabularyWarning, w.kind != lastSurfacedVocabWarning?.kind {
@@ -259,6 +353,7 @@ final class PresetStore: PresetResolving, @unchecked Sendable {
         let overrides: [String: Preset]
         let vocabulary: [VocabEntry]
         let vocabularyWarning: PresetStoreError?
+        let schemaVersion: Int
     }
 
     private static func ensureDirectory(for fileURL: URL) throws {
@@ -271,6 +366,43 @@ final class PresetStore: PresetResolving, @unchecked Sendable {
                 attributes: [.posixPermissions: NSNumber(value: 0o700)]
             )
         }
+    }
+
+    /// Read the on-disk presets file as a raw `[String: Any]` dict. Used by
+    /// the upgrade-merge path to preserve user fields verbatim. Unbounded
+    /// in size — `loadFromDisk` already enforces the 512 KB cap on the load
+    /// path; for the upgrade path we trust what's already there.
+    private static func readRawJSON(at url: URL) throws -> [String: Any] {
+        let data = try Data(contentsOf: url)
+        guard let dict = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw PresetStoreError.malformedJSON("expected object at top level")
+        }
+        return dict
+    }
+
+    /// Read the bundled `presets.example.json` shipped inside the app. Returns
+    /// nil if unavailable (test contexts, command-line tools).
+    static func readBundledRawJSON() -> [String: Any]? {
+        guard let url = Bundle(for: PresetStore.self).url(forResource: "presets.example", withExtension: "json"),
+              let data = try? Data(contentsOf: url),
+              let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+        return dict
+    }
+
+    /// Atomic write of a JSON payload with 0600 perms. Sorted keys keep diffs
+    /// stable across machines.
+    private static func writeJSON(_ payload: [String: Any], to url: URL) throws {
+        let data = try JSONSerialization.data(
+            withJSONObject: payload,
+            options: [.prettyPrinted, .sortedKeys]
+        )
+        try data.write(to: url, options: .atomic)
+        try? FileManager.default.setAttributes(
+            [.posixPermissions: NSNumber(value: 0o600)],
+            ofItemAtPath: url.path
+        )
     }
 
     /// Seed `presets.json` on first launch. Prefers the bundled
@@ -354,6 +486,14 @@ final class PresetStore: PresetResolving, @unchecked Sendable {
             throw PresetStoreError.missingDefaultKey
         }
 
+        // `$schemaVersion`: optional Int. Missing / wrong-type → 0 (legacy,
+        // pre-v1.1). Negative values are clamped to 0 so a tampered file
+        // can't claim to be ahead of bundled.
+        let schemaVersion: Int = {
+            if let v = dict["$schemaVersion"] as? Int { return max(0, v) }
+            return 0
+        }()
+
         let defaultBytes = defaultTemplate.utf8.count
         if defaultBytes > maxTemplateBytes {
             Log.presets.error("default template too long: bundleID=default bytes=\(defaultBytes, privacy: .public)")
@@ -391,7 +531,8 @@ final class PresetStore: PresetResolving, @unchecked Sendable {
             defaultPreset: Preset(name: "default", promptTemplate: defaultTemplate),
             overrides: overrides,
             vocabulary: vocabulary,
-            vocabularyWarning: vocabularyWarning
+            vocabularyWarning: vocabularyWarning,
+            schemaVersion: schemaVersion
         )
     }
 

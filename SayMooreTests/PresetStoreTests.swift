@@ -655,4 +655,133 @@ final class PresetStoreTests: XCTestCase {
         ]
         XCTAssertEqual(PresetStore.vocabularyBilledBytes(vocab), 9 + 28)
     }
+
+    // MARK: - Schema versioning + upgrade (v1.1)
+
+    func testDiskVersionZeroWhenFieldMissing() throws {
+        let url = fileURL()
+        try write(#"{"default":"X{{transcript}}"}"#, to: url)
+        let store = PresetStore(fileURL: url, materializeIfMissing: false)
+        XCTAssertEqual(store.diskSchemaVersion(), 0)
+    }
+
+    func testDiskVersionParsedFromField() throws {
+        let url = fileURL()
+        try write(#"{"$schemaVersion":7,"default":"X{{transcript}}"}"#, to: url)
+        let store = PresetStore(fileURL: url, materializeIfMissing: false)
+        XCTAssertEqual(store.diskSchemaVersion(), 7)
+    }
+
+    func testDiskVersionClampsNegativeToZero() throws {
+        let url = fileURL()
+        try write(#"{"$schemaVersion":-3,"default":"X{{transcript}}"}"#, to: url)
+        let store = PresetStore(fileURL: url, materializeIfMissing: false)
+        XCTAssertEqual(store.diskSchemaVersion(), 0)
+    }
+
+    func testUpgradeAvailableWhenDiskBehindBundled() throws {
+        let url = fileURL()
+        try write(#"{"default":"OLD {{transcript}}"}"#, to: url)
+        let store = PresetStore(fileURL: url, materializeIfMissing: false)
+        if case let .upgradeAvailable(disk, bundled) = store.upgradeStatus() {
+            XCTAssertEqual(disk, 0)
+            XCTAssertEqual(bundled, PresetStore.bundledSchemaVersion)
+        } else {
+            XCTFail("expected .upgradeAvailable")
+        }
+    }
+
+    func testUpToDateWhenDiskMatchesBundled() throws {
+        let url = fileURL()
+        let v = PresetStore.bundledSchemaVersion
+        try write(#"{"$schemaVersion":\#(v),"default":"X{{transcript}}"}"#, to: url)
+        let store = PresetStore(fileURL: url, materializeIfMissing: false)
+        XCTAssertEqual(store.upgradeStatus(), .upToDate)
+    }
+
+    func testUpToDateWhenDiskAheadOfBundled() throws {
+        let url = fileURL()
+        let ahead = PresetStore.bundledSchemaVersion + 5
+        try write(#"{"$schemaVersion":\#(ahead),"default":"X{{transcript}}"}"#, to: url)
+        let store = PresetStore(fileURL: url, materializeIfMissing: false)
+        XCTAssertEqual(store.upgradeStatus(), .upToDate)
+    }
+
+    func testMaterializeCopiesBundledIncludingSchemaVersion() throws {
+        // First-launch path: materialize copies the bundled file verbatim, so
+        // a freshly-installed user starts at the current schema version and
+        // does NOT trigger an upgrade prompt.
+        let url = fileURL()
+        let store = PresetStore(fileURL: url, materializeIfMissing: true)
+        XCTAssertEqual(store.upgradeStatus(), .upToDate, "first-launch users must not see an upgrade prompt")
+    }
+
+    func testDismissBumpsVersionWithoutTouchingPrompts() throws {
+        let url = fileURL()
+        try write(#"{"default":"MY CUSTOM {{transcript}}","overrides":{"com.x.app":"Y {{transcript}}"}}"#, to: url)
+        let store = PresetStore(fileURL: url, materializeIfMissing: false)
+        try store.applyUpgrade(.dismiss)
+
+        let obj = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any]
+        XCTAssertEqual(obj?["$schemaVersion"] as? Int, PresetStore.bundledSchemaVersion)
+        XCTAssertEqual(obj?["default"] as? String, "MY CUSTOM {{transcript}}")
+        let overrides = obj?["overrides"] as? [String: Any]
+        XCTAssertEqual(overrides?["com.x.app"] as? String, "Y {{transcript}}")
+    }
+
+    func testMergeReplacesDefaultPreservesOverridesAndVocabulary() throws {
+        // Simulates a v1.0.1 user with custom override + vocab. Merge should
+        // adopt the bundled default but leave their additions intact.
+        let url = fileURL()
+        let customJSON = #"""
+        {"default":"OLD DEFAULT {{transcript}}",
+         "overrides":{"com.user.editor":"USER OVERRIDE {{transcript}}"},
+         "vocabulary":[{"phonetic":"foo bar","canonical":"FooBar"}]}
+        """#
+        try write(customJSON, to: url)
+        let store = PresetStore(fileURL: url, materializeIfMissing: false)
+        try store.applyUpgrade(.merge)
+
+        let obj = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any]
+        XCTAssertEqual(obj?["$schemaVersion"] as? Int, PresetStore.bundledSchemaVersion)
+        // Default must now match the bundled (which equals PresetStore.defaultPromptTemplate per the drift test).
+        XCTAssertEqual(obj?["default"] as? String, PresetStore.defaultPromptTemplate)
+        // User overrides preserved verbatim.
+        let overrides = obj?["overrides"] as? [String: Any]
+        XCTAssertEqual(overrides?["com.user.editor"] as? String, "USER OVERRIDE {{transcript}}")
+        // User vocabulary preserved verbatim.
+        let vocab = obj?["vocabulary"] as? [[String: String]]
+        XCTAssertEqual(vocab?.count, 1)
+        XCTAssertEqual(vocab?.first?["phonetic"], "foo bar")
+        XCTAssertEqual(vocab?.first?["canonical"], "FooBar")
+    }
+
+    func testOverwriteReplacesEverythingWithBundled() throws {
+        // Overwrite throws away user customizations — explicit user choice.
+        let url = fileURL()
+        try write(#"{"default":"OLD","overrides":{"com.user.app":"CUSTOM"},"vocabulary":[{"phonetic":"a","canonical":"B"}]}"#, to: url)
+        let store = PresetStore(fileURL: url, materializeIfMissing: false)
+        try store.applyUpgrade(.overwrite)
+
+        let obj = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any]
+        XCTAssertEqual(obj?["default"] as? String, PresetStore.defaultPromptTemplate)
+        let overrides = obj?["overrides"] as? [String: Any]
+        XCTAssertNil(overrides?["com.user.app"], "user override must be gone after overwrite")
+        // Bundled ships overrides for the standard four apps — at least one should be present.
+        XCTAssertNotNil(overrides?["com.tinyspeck.slackmacgap"])
+    }
+
+    func testBundledExampleJsonHasSchemaVersion() throws {
+        // Drift test: bundled JSON must always carry a $schemaVersion that
+        // matches the in-code constant. If you bump bundledSchemaVersion, you
+        // must also bump the field in presets.example.json.
+        let url = try XCTUnwrap(
+            Bundle(for: PresetStore.self).url(forResource: "presets.example", withExtension: "json")
+        )
+        let obj = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any]
+        )
+        let v = try XCTUnwrap(obj["$schemaVersion"] as? Int, "presets.example.json missing $schemaVersion field")
+        XCTAssertEqual(v, PresetStore.bundledSchemaVersion)
+    }
 }
