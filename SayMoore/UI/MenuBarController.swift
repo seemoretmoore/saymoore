@@ -38,6 +38,15 @@ final class MenuBarController: NSObject {
         menu.addItem(titleItem)
         menu.addItem(.separator())
 
+        let settingsItem = NSMenuItem(
+            title: "Settings…",
+            action: #selector(openSettingsTapped),
+            keyEquivalent: ","
+        )
+        settingsItem.target = self
+        menu.addItem(settingsItem)
+        menu.addItem(.separator())
+
         let editItem = NSMenuItem(
             title: "Edit Presets…",
             action: #selector(editPresetsTapped),
@@ -103,6 +112,12 @@ final class MenuBarController: NSObject {
             .receive(on: RunLoop.main)
             .sink { [weak self] state in self?.apply(state) }
             .store(in: &cancellables)
+    }
+
+    @objc private func openSettingsTapped() {
+        // SettingsWindow lifetime + AppDelegate dependencies live on the
+        // delegate; bounce through it rather than holding another reference.
+        (NSApp.delegate as? AppDelegate)?.showSettingsWindow()
     }
 
     @objc private func editPresetsTapped() {
