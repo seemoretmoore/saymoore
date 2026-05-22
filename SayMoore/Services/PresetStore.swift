@@ -296,6 +296,39 @@ final class PresetStore: PresetResolving, @unchecked Sendable {
         try Self.writeJSON(onDisk, to: fileURL)
     }
 
+    /// v1.1 Settings UI hook: replace the on-disk `vocabulary` array with the
+    /// supplied entries while preserving every other top-level field
+    /// (default, overrides, snippets, $schemaVersion). The FSEvents watcher
+    /// will pick up the write and reload state automatically.
+    ///
+    /// Each entry must satisfy the existing bounds (≤50 entries, ≤64 bytes
+    /// per side, ≤512 total). The call throws if the supplied entries
+    /// violate any bound — the on-disk file is unchanged in that case.
+    func setVocabulary(_ entries: [VocabEntry]) throws {
+        // Validate against the same bounds the load path enforces, before
+        // touching disk.
+        if entries.count > Self.maxVocabularyEntries {
+            throw PresetStoreError.tooManyVocabEntries(count: entries.count)
+        }
+        for e in entries {
+            if e.phonetic.utf8.count > Self.maxVocabularyEntryBytes {
+                throw PresetStoreError.vocabEntryTooLong(bytes: e.phonetic.utf8.count)
+            }
+            if e.canonical.utf8.count > Self.maxVocabularyEntryBytes {
+                throw PresetStoreError.vocabEntryTooLong(bytes: e.canonical.utf8.count)
+            }
+        }
+        let billed = Self.vocabularyBilledBytes(entries)
+        if billed > Self.maxVocabularyTotalBytes {
+            throw PresetStoreError.vocabularyTooLarge(bytes: billed)
+        }
+
+        var onDisk: [String: Any] = (try? Self.readRawJSON(at: fileURL)) ?? [:]
+        let asJSON = entries.map { ["phonetic": $0.phonetic, "canonical": $0.canonical] }
+        onDisk["vocabulary"] = asJSON
+        try Self.writeJSON(onDisk, to: fileURL)
+    }
+
     /// Re-materialize `presets.json` if missing. Idempotent — no-op when the
     /// file already exists. Used by the "Edit Presets…" menu item to recover
     /// gracefully when the user (or a sync tool) deletes the file post-launch.

@@ -27,6 +27,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// v1.1 — per-session vocab-suggest dedupe state. Held by AppDelegate so
     /// it survives across multiple dictations within the same session.
     private let vocabSuggester = VocabSuggester()
+    private var settingsWindow: SettingsWindow?
     private var micMonitor: MicrophonePermissionMonitor?
     private var bootstrap: ModelBootstrap?
     private var bootstrapWindow: ModelDownloadWindow?
@@ -170,6 +171,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @MainActor
     @discardableResult
     static func reloadPresetsAndNotifyOnFailure(presets: PresetStore) -> Bool {
+        // After-reload UI sync. Keep this in sync with the static signature —
+        // the FSEvents path calls into the instance method which then calls
+        // this static, and we want the Settings VM to refresh on either path.
+        defer {
+            if let d = NSApp.delegate as? AppDelegate {
+                d.settingsWindow?.notifyExternalReload()
+            }
+        }
         do {
             let outcome = try presets.reload()
             Log.presets.info("presets.json reloaded")
@@ -249,6 +258,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 body: "Could not write presets.json — \(error.localizedDescription)"
             )
         }
+    }
+
+    /// v1.1 Settings window opener (called by MenuBarController). Creates
+    /// the window lazily; subsequent calls re-foreground the same instance
+    /// so settings state stays consistent across menu invocations.
+    @MainActor
+    func showSettingsWindow() {
+        if settingsWindow == nil {
+            settingsWindow = SettingsWindow(
+                presets: presets,
+                onOpenPresetsFile: { [weak self] in
+                    guard let self else { return }
+                    self.presets.ensureMaterialized()
+                    NSWorkspace.shared.activateFileViewerSelecting([self.presets.fileURL])
+                },
+                onReloadPresets: { [weak self] in
+                    guard let self else { return }
+                    _ = Self.reloadPresetsAndNotifyOnFailure(presets: self.presets)
+                },
+                onCheckForPresetUpdates: { [weak self] in
+                    guard let self else { return }
+                    switch self.presets.upgradeStatus() {
+                    case .upToDate:
+                        let alert = NSAlert()
+                        alert.messageText = "Presets are up to date"
+                        alert.informativeText = "On-disk presets match the bundled baseline (v\(PresetStore.bundledSchemaVersion))."
+                        alert.runModal()
+                    case .upgradeAvailable(let d, let b):
+                        self.promptPresetUpgrade(diskVersion: d, bundledVersion: b)
+                    }
+                }
+            )
+        }
+        settingsWindow?.show()
     }
 
     /// v1.1 vocab auto-suggest. Called by PipelineCoordinator after every
