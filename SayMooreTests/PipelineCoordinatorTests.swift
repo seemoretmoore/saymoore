@@ -40,7 +40,9 @@ final class PipelineCoordinatorTests: XCTestCase {
     }
     private final class FakeKeyboard: KeyboardAdapter, @unchecked Sendable {
         var pastes = 0
+        var undos = 0
         func postCmdV() { pastes += 1 }
+        func postCmdZ() { undos += 1 }
     }
     private final class FakeFrontmost: FrontmostAdapter, @unchecked Sendable {
         var bundleID: String?

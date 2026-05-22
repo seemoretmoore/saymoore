@@ -92,6 +92,8 @@ final class NotificationCenterAdapter: @unchecked Sendable {
             }
         case .watchdogTimeout:
             return ("Recording stuck", "SayMoore reset itself after 30 seconds without progress. Try again.")
+        case .commandRewriteFailed:
+            return ("Command Mode failed", "Couldn't rewrite the prior paste. The original text is unchanged.")
         default:
             return ("SayMoore error", String(describing: error))
         }
