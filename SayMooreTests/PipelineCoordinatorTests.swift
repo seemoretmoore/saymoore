@@ -630,7 +630,7 @@ private final class BlockingTranscriptionService: TranscriptionService {
     private var continuation: CheckedContinuation<Transcript, Error>?
     private var pendingResult: Result<Transcript, Error>?
 
-    nonisolated func transcribe(samples: [Float], sampleRate: Int) async throws -> Transcript {
+    nonisolated func transcribe(samples: [Float], sampleRate: Int, initialPrompt: String?) async throws -> Transcript {
         return try await withCheckedThrowingContinuation { cont in
             Task { @MainActor in
                 if let r = self.pendingResult {

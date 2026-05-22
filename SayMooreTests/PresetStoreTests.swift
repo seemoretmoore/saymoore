@@ -911,6 +911,40 @@ final class PresetStoreTests: XCTestCase {
         XCTAssertFalse(PresetStore.isValidSnippetName("sig😀"))
     }
 
+    // MARK: - biasHint (v1.1 Whisper initial_prompt)
+
+    func testBiasHintNilForEmptyVocabulary() {
+        XCTAssertNil(PresetStore.biasHint(from: []))
+    }
+
+    func testBiasHintCommaJoinsCanonicals() {
+        let vocab = [
+            VocabEntry(phonetic: "FS event stream", canonical: "FSEventStream"),
+            VocabEntry(phonetic: "Swift UI",        canonical: "SwiftUI"),
+        ]
+        XCTAssertEqual(PresetStore.biasHint(from: vocab), "FSEventStream, SwiftUI")
+    }
+
+    func testBiasHintDeduplicatesCanonicals() {
+        // Multiple phonetics → same canonical (e.g. Quinn + Clem → Qwen).
+        // The hint should list "Qwen" once.
+        let vocab = [
+            VocabEntry(phonetic: "Quinn", canonical: "Qwen"),
+            VocabEntry(phonetic: "Clem",  canonical: "Qwen"),
+            VocabEntry(phonetic: "Swift UI", canonical: "SwiftUI"),
+        ]
+        XCTAssertEqual(PresetStore.biasHint(from: vocab), "Qwen, SwiftUI")
+    }
+
+    func testBiasHintPreservesInsertionOrder() {
+        let vocab = [
+            VocabEntry(phonetic: "a", canonical: "Alpha"),
+            VocabEntry(phonetic: "b", canonical: "Beta"),
+            VocabEntry(phonetic: "c", canonical: "Gamma"),
+        ]
+        XCTAssertEqual(PresetStore.biasHint(from: vocab), "Alpha, Beta, Gamma")
+    }
+
     func testBundledExampleJsonHasSchemaVersion() throws {
         // Drift test: bundled JSON must always carry a $schemaVersion that
         // matches the in-code constant. If you bump bundledSchemaVersion, you
