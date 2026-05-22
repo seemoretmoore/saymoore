@@ -24,6 +24,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }()
     private var presetWatcher: PresetWatcher?
     private var menuBar: MenuBarController?
+    /// v1.1 — per-session vocab-suggest dedupe state. Held by AppDelegate so
+    /// it survives across multiple dictations within the same session.
+    private let vocabSuggester = VocabSuggester()
     private var micMonitor: MicrophonePermissionMonitor?
     private var bootstrap: ModelBootstrap?
     private var bootstrapWindow: ModelDownloadWindow?
@@ -248,6 +251,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// v1.1 vocab auto-suggest. Called by PipelineCoordinator after every
+    /// successful paste. Surfaces at most one suggestion per session per
+    /// term — the user sees "Add 'GraphQL' to vocabulary?" once, and a
+    /// repeat dictation with the same proper noun stays quiet.
+    @MainActor
+    private func considerVocabSuggestion(for cleanedText: String) {
+        guard let suggested = vocabSuggester.consider(
+            cleanedText: cleanedText,
+            existingVocab: presets.vocabulary()
+        ) else { return }
+        Log.presets.info("vocab-suggest → \(suggested, privacy: .public)")
+        NotificationCenterAdapter.shared.notify(
+            title: "Add to vocabulary?",
+            body: "\"\(suggested)\" looks like a proper noun. Edit presets.json under \"vocabulary\" to capture it on future dictations."
+        )
+    }
+
     /// M6: Map each `PresetStoreError` discriminant to concise user-actionable copy.
     /// Extracted as a static function for testability.
     nonisolated static func bannerCopy(for error: Error) -> String {
@@ -378,6 +398,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // C1: stamp blocked flag immediately so probe results that landed before
         // coordinator was created are not silently lost.
         coord.blocked = ollamaEndpointBlocked
+        coord.onPasteSucceeded = { [weak self] cleaned in
+            self?.considerVocabSuggestion(for: cleaned)
+        }
         self.coordinator = coord
 
         // Fire-and-forget Ollama health probe.

@@ -75,6 +75,12 @@ final class PipelineCoordinator {
     /// Drives the MenuBarController pill tint.
     var onLengthCapPhase: (@MainActor (LengthCapPhase) -> Void)?
 
+    /// v1.1 vocab auto-suggest. Fired with the just-pasted cleaned text so
+    /// AppDelegate can run it through `VocabSuggester.consider` and post a
+    /// suggestion banner. Decoupled from the suggester itself so the
+    /// coordinator stays test-friendly (no notification side effects).
+    var onPasteSucceeded: (@MainActor (String) -> Void)?
+
     #if DEBUG
     init(
         appState: AppState,
@@ -468,6 +474,9 @@ final class PipelineCoordinator {
             lastPastedText = cleaned
             lastPasteAt = ContinuousClock.now
             lastPasteBundleID = capturedBundleID
+            // v1.1 vocab auto-suggest hook. Coordinator fires the callback;
+            // AppDelegate owns the VocabSuggester + the notification surface.
+            onPasteSucceeded?(cleaned)
 
             let duration = Double(samples.count) / 16_000.0
             let chosenText = cleaned.isEmpty ? transcript.text : cleaned
