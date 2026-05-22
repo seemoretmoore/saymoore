@@ -66,6 +66,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             )
         }
 
+        // Bundled-preset upgrade check. Existing v1.0.1 users have no
+        // `$schemaVersion` field on disk → treated as 0; bundled is currently
+        // 1; they get the upgrade prompt. First-launch users skip this path
+        // because materializeBaseline copies the bundled file (version
+        // included) to disk before this code runs.
+        if case let .upgradeAvailable(disk, bundled) = presets.upgradeStatus() {
+            Log.presets.info("preset upgrade available: disk=\(disk, privacy: .public) bundled=\(bundled, privacy: .public)")
+            DispatchQueue.main.async { [weak self] in
+                self?.promptPresetUpgrade(diskVersion: disk, bundledVersion: bundled)
+            }
+        }
+
         #if !DEBUG
         // Belt-and-braces: clear any orphan raw-WAVs left by a prior Debug
         // session on this machine. Release builds never write to this dir
@@ -166,6 +178,59 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 body: bannerCopy(for: error)
             )
             return false
+        }
+    }
+
+    /// Prompt the user when bundled `presets.example.json` is newer than the
+    /// on-disk file. Three choices: Merge (keep user overrides + vocabulary,
+    /// adopt bundled default template), Overwrite (replace entire file), or
+    /// Keep Mine (just bump the on-disk version field so we stop nagging).
+    @MainActor
+    func promptPresetUpgrade(diskVersion: Int, bundledVersion: Int) {
+        let alert = NSAlert()
+        alert.messageText = "Updated cleanup prompts available"
+        alert.informativeText = """
+        SayMoore ships an updated set of cleanup prompts (v\(bundledVersion)). Your on-disk presets are v\(diskVersion).
+
+        • Merge — adopt the new default prompt; keep your per-app overrides and vocabulary intact. (Recommended)
+        • Overwrite — replace the entire file with the new bundled presets. Loses any custom overrides or vocabulary.
+        • Keep Mine — leave prompts alone; stop reminding me until the next update.
+        """
+        alert.alertStyle = .informational
+        // NSAlert button order: first added = rightmost (default). Order here
+        // controls visual order; default is Merge (the recommended path).
+        alert.addButton(withTitle: "Merge")
+        alert.addButton(withTitle: "Overwrite")
+        alert.addButton(withTitle: "Keep Mine")
+
+        let strategy: PresetUpgradeStrategy
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:  strategy = .merge
+        case .alertSecondButtonReturn: strategy = .overwrite
+        case .alertThirdButtonReturn:  strategy = .dismiss
+        default: return
+        }
+
+        do {
+            try presets.applyUpgrade(strategy)
+            Log.presets.info("preset upgrade applied: strategy=\(String(describing: strategy), privacy: .public)")
+            // Hot-reload immediately so the new template is live without
+            // waiting for FSEvents (the watcher will also fire, but it
+            // dedupes on identical content).
+            _ = Self.reloadPresetsAndNotifyOnFailure(presets: presets)
+            let bodyByStrategy: String
+            switch strategy {
+            case .merge:     bodyByStrategy = "Default prompt updated. Your overrides and vocabulary were preserved."
+            case .overwrite: bodyByStrategy = "Presets replaced with bundled defaults."
+            case .dismiss:   bodyByStrategy = "Marked v\(bundledVersion). You can edit presets anytime from the menu bar."
+            }
+            NotificationCenterAdapter.shared.notify(title: "SayMoore", body: bodyByStrategy)
+        } catch {
+            Log.presets.error("preset upgrade failed: \(String(describing: error), privacy: .public)")
+            NotificationCenterAdapter.shared.notify(
+                title: "Preset upgrade failed",
+                body: "Could not write presets.json — \(error.localizedDescription)"
+            )
         }
     }
 
