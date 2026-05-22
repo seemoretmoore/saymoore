@@ -20,6 +20,10 @@ enum SayMooreError: Error {
     case recordingLengthWarning
     case silentCapture
     case ollamaEndpointUntrusted
+    /// Command Mode (v1.1) — rewrite LLM returned an unusable response
+    /// (empty, placeholder, or length-collapsed). Reason is a short
+    /// machine-readable tag for logs; user-facing copy is produced separately.
+    case commandRewriteFailed(reason: String)
 
     enum Permission: String, Sendable {
         case microphone, accessibility, inputMonitoring
@@ -65,6 +69,7 @@ extension SayMooreError: Equatable {
         case .permissionRevokedMidSession: return 17
         case .ollamaEndpointUntrusted: return 18
         case .recordingLengthWarning: return 19
+        case .commandRewriteFailed: return 20
         }
     }
 
@@ -78,6 +83,8 @@ extension SayMooreError: Equatable {
         case let (.pasteFocusChanged(ca, cua), .pasteFocusChanged(cb, cub)):
             return ca == cb && cua == cub
         case let (.permissionRevokedMidSession(a), .permissionRevokedMidSession(b)):
+            return a == b
+        case let (.commandRewriteFailed(a), .commandRewriteFailed(b)):
             return a == b
         default:
             // Same discriminant + no payload arm matched ⇒ payload-free case ⇒ equal.

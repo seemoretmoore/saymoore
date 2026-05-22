@@ -20,8 +20,11 @@ final class PasteServiceTests: XCTestCase {
 
     private final class FakeKeyboard: KeyboardAdapter, @unchecked Sendable {
         var pastes = 0
+        var undos = 0
         var onPostCmdV: (() -> Void)?
+        var onPostCmdZ: (() -> Void)?
         func postCmdV() { pastes += 1; onPostCmdV?() }
+        func postCmdZ() { undos += 1; onPostCmdZ?() }
     }
 
     private final class FakeFrontmost: FrontmostAdapter, @unchecked Sendable {

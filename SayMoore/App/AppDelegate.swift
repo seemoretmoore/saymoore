@@ -319,6 +319,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let ollama = OllamaService()
         let cleanup = CleanupService(client: ollama, presets: presets)
+        let commandService = CommandService(client: ollama)
 
         // Slice 5: Silero VAD. If the model file fails to load, log and continue
         // without VAD — the 90s length-cap timer is still armed by PipelineCoordinator.
@@ -344,6 +345,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             paste: paste,
             presets: presets,
             cleanup: cleanup,
+            command: commandService,
             recordingsDir: Self.recordingsDirIfPossible(),
             vadService: vadService,
             historyStore: historyStore,

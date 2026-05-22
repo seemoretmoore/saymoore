@@ -24,6 +24,7 @@ final class NotificationCoordinator {
         case cleanupTimedOut, cleanupFailed
         case pasteFocusChanged, pasteClipboardContended, pasteInjectionFailed
         case silentCapture, recordingTooLong, recordingLengthWarning
+        case commandRewriteFailed
 
         var persistentBadgeLabel: String? {
             switch self {
@@ -38,7 +39,8 @@ final class NotificationCoordinator {
                  .transcriptionFailed, .transcriptionGarbage,
                  .cleanupTimedOut, .cleanupFailed,
                  .pasteFocusChanged, .pasteClipboardContended, .pasteInjectionFailed,
-                 .silentCapture, .recordingTooLong, .recordingLengthWarning:
+                 .silentCapture, .recordingTooLong, .recordingLengthWarning,
+                 .commandRewriteFailed:
                 return nil
             }
         }
@@ -113,6 +115,7 @@ final class NotificationCoordinator {
         case .silentCapture: return .silentCapture
         case .recordingTooLong: return .recordingTooLong
         case .recordingLengthWarning: return .recordingLengthWarning
+        case .commandRewriteFailed: return .commandRewriteFailed
         }
     }
 
