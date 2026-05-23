@@ -199,6 +199,7 @@ final class PipelineCoordinator {
                 transitionToError(error)
                 return
             }
+            armWatchdog()
             appState.transition(to: .transcribing)
             processingTask = Task { await self.processSamples(samples) }
         default:
@@ -269,7 +270,10 @@ final class PipelineCoordinator {
         do {
             try recorder.start()
             appState.transition(to: .recording)
-            armWatchdog()
+            // Recording length is gated by the length-cap timers (60/80/90s).
+            // The watchdog covers only the post-recording pipeline phases
+            // (transcribing/cleaning/pasting) where a hang is non-obvious; it
+            // is armed at each .recording → .transcribing transition.
             armLengthCapTimers()
         } catch {
             Log.audio.error("recorder.start failed: \(String(describing: error), privacy: .public)")
@@ -296,7 +300,14 @@ final class PipelineCoordinator {
     private func fireWatchdog() {
         guard appState.state != .idle else { return }
         Log.pipeline.fault("watchdog fired in state \(String(describing: self.appState.state), privacy: .public)")
+        // If the watchdog fired mid-recording, the engine is still installed and
+        // the ring buffer is still accumulating. Tear it down — otherwise the
+        // NEXT recorder.start() early-returns on isRecording, skips the buffer
+        // reset, and the next stop() drains session N-1 + silence + session N
+        // (whisper hallucinates tech-bro words on the silence gap).
+        recorder.cancel()
         capturedBundleID = nil
+        captureIsCommandMode = false
         processingTask?.cancel()
         processingTask = nil
         cancelLengthCapTimers()
@@ -322,6 +333,7 @@ final class PipelineCoordinator {
             transitionToError(error)
             return
         }
+        armWatchdog()
         appState.transition(to: .transcribing)
         processingTask = Task { await self.processSamples(samples) }
     }
@@ -391,6 +403,7 @@ final class PipelineCoordinator {
         }
         // Post the "stopped early" banner before processing kicks off.
         onFallback?(.recordingTooLong)
+        armWatchdog()
         appState.transition(to: .transcribing)
         processingTask = Task { await self.processSamples(samples) }
     }
