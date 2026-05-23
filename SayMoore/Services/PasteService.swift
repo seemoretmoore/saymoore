@@ -1,4 +1,5 @@
 import Foundation
+import os
 #if canImport(AppKit)
 @preconcurrency import AppKit
 #endif
@@ -142,6 +143,15 @@ struct CGEventKeyboardAdapter: KeyboardAdapter {
     }
 
     func postCmdZ() {
+        // H2 diagnosis: log live modifier state at the instant we post Cmd-Z.
+        // If .maskControl is set, the Ctrl-Ctrl hotkey left a stuck flag and
+        // Cmd-Z is actually being delivered as Ctrl-Cmd-Z (no-op).
+        let flags = CGEventSource.flagsState(.combinedSessionState)
+        let ctrl = flags.contains(.maskControl) ? "CTRL " : ""
+        let opt  = flags.contains(.maskAlternate) ? "OPT " : ""
+        let cmd  = flags.contains(.maskCommand) ? "CMD " : ""
+        let shft = flags.contains(.maskShift) ? "SHIFT " : ""
+        Log.paste.info("postCmdZ flagsState=[\(ctrl, privacy: .public)\(opt, privacy: .public)\(cmd, privacy: .public)\(shft, privacy: .public)] raw=\(flags.rawValue, privacy: .public)")
         postCmdKey(virtualKey: 0x06) // 'z'
     }
 
