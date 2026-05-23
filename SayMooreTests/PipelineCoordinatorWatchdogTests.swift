@@ -45,6 +45,45 @@ final class PipelineCoordinatorWatchdogTests: XCTestCase {
         }
     }
 
+    /// The watchdog must NOT fire during recording — recording length is
+    /// already capped by the length-cap timers (60/80/90s). If the watchdog
+    /// armed during recording, a slow-but-not-stuck user (≥30s of natural
+    /// speech) would be cut off and, worse, the recorder would be left in
+    /// a half-stopped state where the next start() short-circuits on the
+    /// stale isRecording flag and fuses sessions on the next stop().
+    func test_watchdogDoesNotFireDuringRecording() async throws {
+        let state = AppState()
+        let recorder = FakeRecorder()
+        let paste = PasteService(
+            pasteboard: FakePasteboard(),
+            keyboard: FakeKeyboard(),
+            frontmost: FakeFrontmost(bundleID: "x"),
+            restoreDelay: .zero
+        )
+        var fallback: SayMooreError?
+        let coord = PipelineCoordinator(
+            appState: state,
+            recorder: recorder,
+            transcription: StuckTranscription(),
+            paste: paste,
+            presets: StubPresets(),
+            cleanup: nil,
+            recordingsDir: nil,
+            persistRawWAV: false,
+            vadService: nil,
+            lengthCapCaution: 1000,
+            lengthCapWarning: 1000,
+            lengthCapHardStop: 1000,
+            watchdogTimeout: 0.15,
+            onFallback: { fallback = $0 }
+        )
+        coord.toggle(bundleID: "x")   // start recording, do NOT stop
+        try? await Task.sleep(for: .milliseconds(400))
+        XCTAssertEqual(state.state, .recording, "watchdog must not fire during recording")
+        XCTAssertTrue(recorder.isRecording)
+        XCTAssertNil(fallback)
+    }
+
     func test_watchdogFires_whenPipelineStuckInTranscribing() async throws {
         let state = AppState()
         let recorder = FakeRecorder()
