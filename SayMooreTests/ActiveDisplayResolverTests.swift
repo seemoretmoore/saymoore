@@ -11,6 +11,49 @@ final class ActiveDisplayResolverTests: XCTestCase {
         frame: NSRect(x: 1440, y: 0, width: 1920, height: 1080)
     )
 
+    func testPickWindowFrameFlipsCGCoordsToNS() {
+        // Primary 1440×900 at origin. CG window at (100, 80, 400, 300)
+        // → CG bottom edge y = 80 + 300 = 380 → NS y = 900 - 380 = 520.
+        let infos: [[String: Any]] = [[
+            kCGWindowOwnerPID as String: pid_t(42),
+            kCGWindowBounds as String: [
+                "X": CGFloat(100), "Y": CGFloat(80),
+                "Width": CGFloat(400), "Height": CGFloat(300),
+            ],
+        ]]
+        let frame = ActiveDisplayResolver.pickWindowFrame(
+            frontmostPID: 42,
+            windowInfos: infos,
+            primaryFrame: primary.frame
+        )
+        XCTAssertEqual(frame, NSRect(x: 100, y: 520, width: 400, height: 300))
+    }
+
+    func testPickWindowFrameReturnsNilWhenNoPID() {
+        let frame = ActiveDisplayResolver.pickWindowFrame(
+            frontmostPID: nil,
+            windowInfos: [],
+            primaryFrame: primary.frame
+        )
+        XCTAssertNil(frame)
+    }
+
+    func testPickWindowFrameReturnsNilWhenNoOwnedWindow() {
+        let infos: [[String: Any]] = [[
+            kCGWindowOwnerPID as String: pid_t(99),
+            kCGWindowBounds as String: [
+                "X": CGFloat(0), "Y": CGFloat(0),
+                "Width": CGFloat(100), "Height": CGFloat(100),
+            ],
+        ]]
+        let frame = ActiveDisplayResolver.pickWindowFrame(
+            frontmostPID: 42,
+            windowInfos: infos,
+            primaryFrame: primary.frame
+        )
+        XCTAssertNil(frame)
+    }
+
     func testPicksScreenContainingWindowMidpoint_Primary() {
         // Window at CG (100, 100, 200, 200) → midpoint CG (200, 200) → NSScreen y = 900 - 200 = 700.
         // NSPoint (200, 700) is inside primary's NSRect (0..1440, 0..900).

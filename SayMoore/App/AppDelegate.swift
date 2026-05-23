@@ -478,8 +478,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             audioFeedback.handle(old: old, new: new)
             switch (old, new) {
             case (.idle, .recording):
-                let label = PresetDisplayName.resolve(bundleID: self?.lastBundleID)
-                hud.show(preset: label)
+                hud.show()
                 cursorIndicator.show(at: self?.lastCursorPoint ?? .zero)
             case (.recording, _):
                 hud.hide()
@@ -493,6 +492,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         recorder.onDeviceChange = { [weak coordinator = self.coordinator] in
             coordinator?.handleAudioDeviceChange()
+        }
+        recorder.onLevelUpdate = { [hud] level in
+            Task { @MainActor in hud.updateLevel(level) }
         }
         coordinator?.onLengthCapPhase = { [weak menuBar] phase in
             menuBar?.setPhase(phase)

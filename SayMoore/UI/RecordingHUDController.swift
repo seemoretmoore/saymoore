@@ -1,27 +1,42 @@
 import AppKit
 import QuartzCore
 
-/// Borderless click-through HUD shown on the active display while recording.
-/// Configured to not steal focus, not block clicks, not appear in screenshots,
-/// and to render above fullscreen apps via NSWindow.CollectionBehavior.
+/// Borderless click-through HUD shown anchored to the bottom of the active
+/// window while recording. Click-through, excluded from screenshots, no focus
+/// steal, renders above fullscreen apps via NSWindow.CollectionBehavior.
 @MainActor
 final class RecordingHUDController {
-    static let labelCollapseDelay: TimeInterval = 1.2
     static let fadeInDuration: TimeInterval = 0.08
     static let fadeOutDuration: TimeInterval = 0.12
 
+    private static let pillSize = NSSize(width: 130, height: 30)
+    private static let barCount = 12
+    private static let barWidth: CGFloat = 4
+    private static let barGap: CGFloat = 4
+    private static let barAreaX: CGFloat = 24
+    private static let barMaxHeight: CGFloat = 22
+    private static let barMinHeight: CGFloat = 4
+    /// Distance from the active window's bottom edge to the TOP of the pill.
+    /// Positive value = pill top sits this many px above the window's bottom
+    /// edge (the rest of the pill hangs below the window).
+    private static let pillTopAboveWindowBottom: CGFloat = 4
+    /// FFVII Lifestream — luminous green with a touch of cyan.
+    private static let lifestream = NSColor(red: 0.4, green: 1.0, blue: 0.6, alpha: 1.0)
+
     private let panel: NSPanel
-    private let labelView: NSTextField
     private let dotLayer: CALayer
-    private var labelCollapseTimer: Timer?
+    private var barLayers: [CALayer] = []
+    private var levelBuffer: [Float] = Array(repeating: 0, count: barCount)
+    private var displayBuffer: [Float] = Array(repeating: 0, count: barCount)
     private var dotPulseTimer: Timer?
     private var dotDim: Bool = false
+    nonisolated(unsafe) private var appActivationObserver: NSObjectProtocol?
 
-    /// Exposed for unit tests.
-    var currentLabelText: String { labelView.stringValue }
+    /// Exposed for unit tests — current smoothed bar amplitudes (0...1).
+    var displayLevels: [Float] { displayBuffer }
 
     init() {
-        let size = NSSize(width: 220, height: 30)
+        let size = Self.pillSize
         panel = NSPanel(
             contentRect: NSRect(origin: .zero, size: size),
             styleMask: [.borderless, .nonactivatingPanel],
@@ -42,37 +57,59 @@ final class RecordingHUDController {
         background.material = .hudWindow
         background.blendingMode = .behindWindow
         background.state = .active
+        background.isEmphasized = true
         background.wantsLayer = true
         background.layer?.cornerRadius = size.height / 2
+        // Clip everything (bar shadows, highlight gradient) to the rounded pill.
         background.layer?.masksToBounds = true
+        background.layer?.borderWidth = 0.5
+        background.layer?.borderColor = NSColor.white.withAlphaComponent(0.32).cgColor
+
+        // Inner highlight gradient — white sheen on the top half, fades to clear.
+        // Gives the pill a glass-y reflection without overpowering the bars.
+        let highlight = CAGradientLayer()
+        highlight.frame = NSRect(origin: .zero, size: size)
+        highlight.colors = [
+            NSColor.white.withAlphaComponent(0.20).cgColor,
+            NSColor.white.withAlphaComponent(0.04).cgColor,
+            NSColor.clear.cgColor,
+        ]
+        highlight.locations = [0.0, 0.5, 1.0]
+        highlight.startPoint = CGPoint(x: 0.5, y: 1.0)  // top
+        highlight.endPoint = CGPoint(x: 0.5, y: 0.0)    // bottom
+        background.layer?.addSublayer(highlight)
 
         let dotSize: CGFloat = 7
         dotLayer = CALayer()
-        dotLayer.frame = NSRect(x: 12, y: (size.height - dotSize) / 2, width: dotSize, height: dotSize)
+        dotLayer.frame = NSRect(x: 10, y: (size.height - dotSize) / 2, width: dotSize, height: dotSize)
         dotLayer.cornerRadius = dotSize / 2
         dotLayer.backgroundColor = NSColor.systemRed.withAlphaComponent(0.85).cgColor
         background.layer?.addSublayer(dotLayer)
 
-        labelView = NSTextField(labelWithString: "")
-        labelView.frame = NSRect(x: 26, y: 0, width: size.width - 34, height: size.height)
-        labelView.font = NSFont.systemFont(ofSize: 11, weight: .regular)
-        labelView.textColor = NSColor.secondaryLabelColor
-        labelView.alignment = .left
-        labelView.lineBreakMode = .byTruncatingTail
-        labelView.cell?.usesSingleLineMode = true
-        background.addSubview(labelView)
+        let lifestreamCG = Self.lifestream.cgColor
+        for i in 0..<Self.barCount {
+            let layer = CALayer()
+            let x = Self.barAreaX + CGFloat(i) * (Self.barWidth + Self.barGap)
+            let y = (size.height - Self.barMinHeight) / 2
+            layer.frame = NSRect(x: x, y: y, width: Self.barWidth, height: Self.barMinHeight)
+            layer.cornerRadius = Self.barWidth / 2
+            layer.backgroundColor = lifestreamCG
+            // Lifestream glow.
+            layer.shadowColor = lifestreamCG
+            layer.shadowRadius = 4
+            layer.shadowOpacity = 0.9
+            layer.shadowOffset = .zero
+            background.layer?.addSublayer(layer)
+            barLayers.append(layer)
+        }
 
         panel.contentView = background
         panel.alphaValue = 0
     }
 
-    func show(preset displayName: String) {
-        let screen = ActiveDisplayResolver.resolve() ?? NSScreen.main
-        let panelSize = panel.frame.size
-        if let screen {
-            panel.setFrame(Self.topCenterFrame(in: screen, size: panelSize), display: false)
-        }
-        labelView.stringValue = Self.expandedLabel(preset: displayName)
+    func show() {
+        let frame = Self.frameForActiveContext(panelSize: panel.frame.size)
+        panel.setFrame(frame, display: false)
         panel.alphaValue = 0
         panel.orderFrontRegardless()
         NSAnimationContext.runAnimationGroup { ctx in
@@ -80,18 +117,13 @@ final class RecordingHUDController {
             panel.animator().alphaValue = 1.0
         }
         startDotPulse()
-        labelCollapseTimer?.invalidate()
-        let timer = Timer(timeInterval: Self.labelCollapseDelay, repeats: false) { [weak self] _ in
-            Task { @MainActor [weak self] in self?.collapseLabel() }
-        }
-        RunLoop.main.add(timer, forMode: .common)
-        labelCollapseTimer = timer
+        startAppFollowing()
     }
 
     func hide() {
-        labelCollapseTimer?.invalidate()
-        labelCollapseTimer = nil
+        stopAppFollowing()
         stopDotPulse()
+        resetBars()
         NSAnimationContext.runAnimationGroup({ ctx in
             ctx.duration = Self.fadeOutDuration
             panel.animator().alphaValue = 0
@@ -100,10 +132,36 @@ final class RecordingHUDController {
         })
     }
 
-    /// Internal — exposed for tests so they can verify the post-collapse label
-    /// without depending on the 1.2 s timer firing.
-    func collapseLabel() {
-        labelView.stringValue = Self.collapsedLabel
+    /// Push a new normalized amplitude (0…1) into the rolling buffer and
+    /// redraw bars. Safe to call when the panel is hidden.
+    func updateLevel(_ level: Float) {
+        let clamped = max(0, min(1, level))
+        levelBuffer.removeFirst()
+        levelBuffer.append(clamped)
+
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        for i in 0..<Self.barCount {
+            displayBuffer[i] = 0.4 * displayBuffer[i] + 0.6 * levelBuffer[i]
+            let h = Self.barMinHeight + CGFloat(displayBuffer[i]) * (Self.barMaxHeight - Self.barMinHeight)
+            let x = Self.barAreaX + CGFloat(i) * (Self.barWidth + Self.barGap)
+            let y = (Self.pillSize.height - h) / 2
+            barLayers[i].frame = NSRect(x: x, y: y, width: Self.barWidth, height: h)
+        }
+        CATransaction.commit()
+    }
+
+    private func resetBars() {
+        levelBuffer = Array(repeating: 0, count: Self.barCount)
+        displayBuffer = Array(repeating: 0, count: Self.barCount)
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        for i in 0..<Self.barCount {
+            let x = Self.barAreaX + CGFloat(i) * (Self.barWidth + Self.barGap)
+            let y = (Self.pillSize.height - Self.barMinHeight) / 2
+            barLayers[i].frame = NSRect(x: x, y: y, width: Self.barWidth, height: Self.barMinHeight)
+        }
+        CATransaction.commit()
     }
 
     private func startDotPulse() {
@@ -131,11 +189,69 @@ final class RecordingHUDController {
         CATransaction.commit()
     }
 
-    static func expandedLabel(preset displayName: String) -> String {
-        "Recording — \(displayName)"
+    private func startAppFollowing() {
+        stopAppFollowing()
+        appActivationObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.relocate()
+            }
+        }
     }
 
-    static let collapsedLabel = "Recording"
+    private func stopAppFollowing() {
+        if let obs = appActivationObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(obs)
+            appActivationObserver = nil
+        }
+    }
+
+    /// Recompute and animate the pill into the new active window's anchor.
+    /// CGWindowList can be stale at the instant `didActivate` fires; defer
+    /// briefly so the new app's window has been promoted to the top of the
+    /// z-order.
+    private func relocate() {
+        let panelSize = panel.frame.size
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                let target = Self.frameForActiveContext(panelSize: panelSize)
+                NSAnimationContext.runAnimationGroup { ctx in
+                    ctx.duration = 0.15
+                    ctx.allowsImplicitAnimation = true
+                    self.panel.animator().setFrame(target, display: false)
+                }
+            }
+        }
+    }
+
+    /// Resolves the HUD's screen frame: anchored to the bottom edge of the
+    /// active window when one is available, otherwise top-center of the
+    /// active display.
+    static func frameForActiveContext(panelSize: NSSize) -> NSRect {
+        if let windowFrame = ActiveDisplayResolver.resolveWindowFrame() {
+            return bottomCenterFrame(in: windowFrame, size: panelSize)
+        }
+        if let screen = ActiveDisplayResolver.resolve() {
+            return topCenterFrame(in: screen, size: panelSize)
+        }
+        return NSRect(origin: .zero, size: panelSize)
+    }
+
+    /// Position `size` horizontally centered on `windowFrame`. The TOP of the
+    /// pill sits `pillTopAboveWindowBottom` px above the window's bottom edge
+    /// — i.e., the pill hangs below the window with its top edge slightly
+    /// crossing into the window's lower region.
+    static func bottomCenterFrame(in windowFrame: NSRect, size: NSSize) -> NSRect {
+        let x = windowFrame.midX - size.width / 2
+        // pill.maxY = window.minY + pillTopAboveWindowBottom
+        // → pill.minY = pill.maxY - size.height
+        let y = windowFrame.minY + Self.pillTopAboveWindowBottom - size.height
+        return NSRect(x: x, y: y, width: size.width, height: size.height)
+    }
 
     static func topCenterFrame(in screen: NSScreen, size: NSSize) -> NSRect {
         let visible = screen.visibleFrame
