@@ -4,7 +4,7 @@ Local, free, durable voice dictation for macOS.
 
 Hit a hotkey, talk, get clean text pasted into the focused field. Everything runs on-device — Whisper transcription in-process, Qwen 2.5 7B cleanup via local Ollama. No API costs, no subscriptions, no network at runtime, no audio or transcripts leaving the machine.
 
-> **Status:** v1.0 shipped. All 12 PRD slices complete; the app updates itself via Sparkle. See [`docs/PRD.md`](docs/PRD.md) for the full product spec.
+> **Status:** v1.0 shipped (Sparkle auto-update live). v1.1 in flight on `main` with Command Mode, voice snippets, vocabulary auto-suggest, the Settings window, and a live audio-level HUD. See [`docs/PRD.md`](docs/PRD.md) for the full product spec.
 
 ## How it works
 
@@ -54,6 +54,28 @@ A deterministic case-insensitive word-boundary substitution runs after the Ollam
 - Up to 512 bytes total (sum of all phonetic + canonical bytes)
 
 On a violation, vocabulary is disabled for that load and a notification posts; the rest of `presets.json` (default + per-app overrides) keeps working. Repeat saves of the same bad file stay quiet (dedupe). See [`docs/manual-tests/vocab-cleanup-hint.md`](docs/manual-tests/vocab-cleanup-hint.md) for the test protocol.
+
+### Command Mode (v1.1)
+
+For up to 5 seconds after a dictation lands, press **Ctrl-Ctrl** again and speak an edit instead of new text. Examples: *"make it more formal"*, *"add a polite ending"*, *"make it shorter"*. SayMoore sends Cmd-Z to undo the prior paste, then pastes the rewritten version. Chains cleanly — each successful rewrite resets the 5s window, so you can iterate. Works in AppKit-based text fields (Notes, TextEdit, Messages, Mail, Slack, BBEdit). Apps that don't treat paste as a single undo unit (Terminal, some Catalyst apps) will append instead of replace — known limitation.
+
+If focus moves to a different app before the rewrite completes, the rewrite is discarded with a "focus changed" banner — no Cmd-Z ever fires in the wrong app.
+
+### Voice snippets (v1.1)
+
+Define text snippets in `presets.json` and expand them by voice. Each entry is a `{name, body}` pair under the top-level `snippets` map. Dictate *"insert signature"* and SayMoore expands the matching snippet inline before the cleanup step runs. Useful for sign-offs, addresses, code stubs, or any block of text you say verbatim more than once a week.
+
+### Live audio level (v1.1)
+
+The recording HUD shows a 12-bar animated waveform driven by mic RMS. Bars pulse with your voice and stay flat on silence, so you can tell at a glance whether your input is being picked up. The pill anchors to the bottom of the active window and follows you across Cmd-Tab.
+
+### Settings window (v1.1)
+
+`Cmd-,` opens a four-tab Settings window: **General** (launch at login, sounds, hotkey reminder), **Presets** (status + reload), **Vocabulary** (review the loaded auto-suggested terms), **About** (version + update check). All editable state still lives in `presets.json`; Settings is a read-mostly inspector with a few toggles.
+
+### Vocabulary auto-suggest (v1.1)
+
+When the same proper-noun-like term gets transcribed inconsistently across recordings (e.g., `Anthropic` vs `anthropy`), SayMoore offers to add it to the vocabulary list. Accept once and future transcriptions stay correct. Whisper's `initial_prompt` is biased with the current vocabulary's canonical forms so the model is primed to hear them.
 
 ## Status / what's shipped
 
