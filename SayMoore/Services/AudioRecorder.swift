@@ -25,6 +25,12 @@ final class AudioRecorder {
     // its own worker queue. Set this BEFORE start(); reset is handled here.
     var vadService: VADService?
 
+    /// Fired from the audio thread for every converted PCM chunk with a
+    /// normalized 0...1 amplitude (RMS → dBFS, clamped to -60…0 dBFS).
+    /// Handler is responsible for its own threading; the HUD wiring in
+    /// AppDelegate hops to MainActor before touching CALayer.
+    var onLevelUpdate: (@Sendable (Float) -> Void)?
+
     /// Fired (on the main actor) when AVAudioEngine posts a
     /// configurationChangeNotification while we're mid-recording. The recorder
     /// has already stopped itself by the time this fires — the handler is
@@ -62,6 +68,7 @@ final class AudioRecorder {
 
         let ring = self.ringBuffer
         let vad = self.vadService
+        let levelHandler = self.onLevelUpdate
         input.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { [weak self] buffer, _ in
             do {
                 let converted = try conv.convert(buffer)
@@ -74,6 +81,9 @@ final class AudioRecorder {
                 // Acceptable for dictation — not hard-real-time audio.
                 if let vad {
                     vad.feed(Array(bp))
+                }
+                if let levelHandler {
+                    levelHandler(Self.computeNormalizedLevel(bp))
                 }
             } catch {
                 // Rate-limit converter error logs to 1/sec across audio-thread invocations.
@@ -124,6 +134,26 @@ final class AudioRecorder {
 
         Log.audio.info("AudioRecorder stopped (\(samples.count, privacy: .public) samples, trimmed \(drained.count - samples.count, privacy: .public))")
         return samples
+    }
+
+    /// RMS over the buffer → dBFS → normalized 0…1 via a -60…0 dBFS window.
+    /// Pure function; safe to call from the audio thread.
+    nonisolated static func computeNormalizedLevel(_ samples: UnsafeBufferPointer<Float>) -> Float {
+        let n = samples.count
+        guard n > 0 else { return 0 }
+        var sumSquares: Float = 0
+        for i in 0..<n {
+            let s = samples[i]
+            sumSquares += s * s
+        }
+        let rms = sqrtf(sumSquares / Float(n))
+        let db = 20 * log10f(max(rms, 1e-7))
+        return max(0, min(1, (db + 60) / 60))
+    }
+
+    /// `[Float]` overload for tests.
+    nonisolated static func computeNormalizedLevel(_ samples: [Float]) -> Float {
+        samples.withUnsafeBufferPointer { computeNormalizedLevel($0) }
     }
 
     static func trimChimeBleed(_ samples: [Float], sampleRate: Double) -> [Float] {

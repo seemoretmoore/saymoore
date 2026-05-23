@@ -45,6 +45,43 @@ enum ActiveDisplayResolver {
         return screens.first(where: { $0.frame.contains(pt) })
     }
 
+    /// Resolves the frontmost window's frame in `NSScreen` coordinates
+    /// (origin bottom-left of the primary display), or `nil` when no usable
+    /// window is found. Used by the recording HUD to anchor itself to the
+    /// active window's bottom edge.
+    @MainActor
+    static func resolveWindowFrame() -> NSRect? {
+        let app = NSWorkspace.shared.frontmostApplication
+        let screens = NSScreen.screens
+        let infos = defaultWindowList()
+        return pickWindowFrame(
+            frontmostPID: app?.processIdentifier,
+            windowInfos: infos,
+            primaryFrame: screens.first?.frame
+        )
+    }
+
+    /// Pure flip-and-find logic for `resolveWindowFrame`. Returns the frontmost
+    /// window's bounds in NS coords (bottom-left origin on the primary screen).
+    static func pickWindowFrame(
+        frontmostPID: pid_t?,
+        windowInfos: [[String: Any]],
+        primaryFrame: NSRect?
+    ) -> NSRect? {
+        guard let pid = frontmostPID, let primary = primaryFrame else { return nil }
+        let owned = windowInfos.filter {
+            ($0[kCGWindowOwnerPID as String] as? pid_t) == pid
+        }
+        guard let top = owned.first,
+              let bounds = top[kCGWindowBounds as String] as? [String: CGFloat],
+              let x = bounds["X"], let y = bounds["Y"],
+              let w = bounds["Width"], let h = bounds["Height"]
+        else { return nil }
+        // CGWindow uses top-left origin on the primary display; flip to NS bottom-left.
+        let nsY = primary.maxY - (y + h)
+        return NSRect(x: x, y: nsY, width: w, height: h)
+    }
+
     /// Wrapper used in tests so we can swap `NSScreen` for a value type.
     struct ScreenFrame {
         let frame: NSRect
