@@ -161,6 +161,28 @@ bash scripts/build-release.sh         # or open SayMoore.xcodeproj in Xcode
 
 The signing script is idempotent — re-running it without `--force-regen` is a safe no-op. Using `--force-regen` rotates the identity, which revokes any Accessibility / Input-Monitoring permissions previously granted to SayMoore.
 
+## Contributing workflow
+
+`main` is protected. Changes land via pull request:
+
+```bash
+git switch -c fix/short-description
+# edit, build, commit
+git push -u origin fix/short-description
+gh pr create --fill
+gh pr merge --auto --squash --delete-branch   # auto-merges when CI is green
+```
+
+A local pre-push hook builds the Debug target before allowing push, so a broken branch never reaches GitHub. Install it once:
+
+```bash
+bash scripts/install-hooks.sh
+```
+
+Set `SKIP_PREPUSH=1` to bypass it for a single push (rarely needed).
+
+CI (GitHub Actions) runs build + tests on every PR; merging is blocked until CI is green. The CI workflow lives in [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
+
 ## License
 
 MIT — see [`LICENSE`](LICENSE).
