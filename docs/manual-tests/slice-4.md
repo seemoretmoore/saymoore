@@ -2,7 +2,7 @@
 
 Goal: verify per-app cleanup presets resolve by bundle ID, that `~/Library/Application Support/SayMoore/presets.json` hot-reloads on edit (including atomic-rename saves), and that malformed JSON falls back to last-good config.
 
-Signed off **2026-05-14** on macOS Sonoma 14 / Apple Silicon.
+Signed off **2026-05-14** on macOS Sonoma 14.
 
 ## Bundled override scope
 

@@ -36,7 +36,7 @@ For each phrase: Ctrl-Ctrl, speak verbatim, Ctrl-Ctrl, observe paste. Fill in ra
 | 5 | Short utterance (fast-path) | "ok thanks" | _(not captured)_ | Okay, thanks. | ✅ | Fast-path. |
 | 6 | Long, multi-sentence | "so the plan is to first finish slice three and then move to slice four which adds the per app presets and the hot reload via FS events" | _(not captured)_ | The plan is to first finish slice 3 and then move to slice 4, which adds the per-app presets and the hot reload via FS events. | ✅ | Good sentence structure, commas, "per-app" hyphenation. |
 | 7 | Question | "do you think we should pull the gpt oss model or stick with qwen" | _(not captured)_ | Do you think we should pull the GPT OSS model or stick with Clem? | ✅ cleanup | Whisper misheard "Qwen" as "Clem" — acoustic miss. Cleanup added "?" correctly and preserved phrasing. |
-| 8 | Proper nouns | "send this to name at example dot com via slack" | _(not captured)_ | Send this to seemoretmoore@example.com via Slack. | ✅ | Email assembled, "Slack" + "seemoretmoore" capitalized. |
+| 8 | Proper nouns | "send this to seemoretmoore at example dot com via slack" | _(not captured)_ | Send this to seemoretmoore@example.com via Slack. | ✅ | Email assembled, "Slack" + "seemoretmoore" capitalized. |
 | 9 | Numbers + units | "the timeout is ten seconds and the fast path threshold is three words" | _(not captured)_ | The timeout is 10 seconds and the fast path threshold is three words. | ✅ | "10"/"three" inconsistency matches what was dictated — PRD says preserve word choice. |
 | 10 | Already clean | "Ship it." | _(not captured)_ | Ship it. | ✅ | Fast-path. |
 

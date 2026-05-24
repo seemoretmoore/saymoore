@@ -887,9 +887,9 @@ final class PresetStoreTests: XCTestCase {
         // expand to "— seemoretmoore_long".
         let out = PresetStore.expandSnippets(
             in: "use insert sig_long today",
-            snippets: ["sig": "— seemoretmoore", "sig_long": "— SayMoore contributors, MD"]
+            snippets: ["sig": "— seemoretmoore", "sig_long": "— seemoretmoore Moore, MD"]
         )
-        XCTAssertEqual(out, "use — SayMoore contributors, MD today")
+        XCTAssertEqual(out, "use — seemoretmoore Moore, MD today")
     }
 
     func testExpandSnippetsEmptyMapIsNoOp() {

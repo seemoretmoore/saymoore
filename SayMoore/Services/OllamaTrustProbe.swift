@@ -83,7 +83,7 @@ actor OllamaTrustProbe {
     /// M4: HTTP check is liveness only. Returns `.failure` on network error so the
     /// caller can distinguish "no listener" from "bad binary".
     private func checkVersion() async -> Result<Bool, Error> {
-        guard let url = URL(string: "http://127.0.0.1:11434/api/version") else {
+        guard let url = URL(string: "http://localhost:11434/api/version") else {
             return .success(false)
         }
         do {

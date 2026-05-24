@@ -1,7 +1,7 @@
 # Slice 1.5 — Whisper SwiftPM spike
 
 **Date:** 2026-05-09
-**Status:** ❌ on the original plan (SwiftPM); ⚠️ available via XCFramework. Decision required from seemoretmoore before Slice 2 begins.
+**Status:** ❌ on the original plan (SwiftPM); ⚠️ available via XCFramework. Decision required from the author before Slice 2 begins.
 
 ---
 
@@ -73,6 +73,6 @@ If A is rejected, **Option B** (subprocess) is the documented PRD ❌ fallback a
 
 ## Decision
 
-> **seemoretmoore:** picked option ____ on ____.
+> **Author:** picked option ____ on ____.
 
 Spike target reverted from `project.yml`; main app still builds clean. No artifacts retained beyond this writeup.

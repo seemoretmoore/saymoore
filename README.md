@@ -101,7 +101,7 @@ This repo is being built one vertical slice at a time. Track progress in the [Gi
 ## Requirements
 
 - macOS 14 (Sonoma) or later
-- M-series Apple Silicon recommended; tested on Apple Silicon
+- M-series Apple Silicon recommended
 - [Ollama](https://ollama.com) installed locally with `qwen2.5:7b-instruct` pulled
 - ~6 GB free RAM while running (1.5 GB Whisper + 4.5 GB Qwen)
 - ~6 GB free disk for models
