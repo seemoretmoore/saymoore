@@ -2,7 +2,7 @@
 
 Goal: verify per-app cleanup presets resolve by bundle ID, that `~/Library/Application Support/SayMoore/presets.json` hot-reloads on edit (including atomic-rename saves), and that malformed JSON falls back to last-good config.
 
-Signed off **2026-05-14** on macOS Sonoma 14 / M2 Ultra.
+Signed off **2026-05-14** on macOS Sonoma 14.
 
 ## Bundled override scope
 
@@ -16,21 +16,21 @@ Final bundled `presets.example.json` ships `default` plus four overrides:
 | `com.apple.MobileSMS` | Messages |
 
 Apple Mail (`com.apple.mail`) and Xcode (`com.apple.dt.Xcode`) were considered but dropped:
-- **Mail**: not part of Tracy's workflow (Gmail in browser). A browser-based override is deferred.
+- **Mail**: not part of Alex's workflow (Gmail in browser). A browser-based override is deferred.
 - **Xcode**: BBEdit is the actual daily code/text editor; Xcode is only opened to develop SayMoore itself. The same technical-preservation prompt applies under the BBEdit bundle ID.
 
 ## Part A — per-app dictation matrix
 
 Two phrases used: a casual matrix phrase (Slack/Notes/Messages/browser default) and a technical phrase to exercise BBEdit's identifier/acronym handling.
 
-**Casual phrase:** "hi tracy uh i think we should ship friday and also fix the api timeout"
+**Casual phrase:** "hi alex uh i think we should ship friday and also fix the api timeout"
 
 | # | App | Bundle ID | Cleaned output | Pass |
 |---|---|---|---|---|
-| 1 | Slack | `com.tinyspeck.slackmacgap` | `hi tracy, i think we should ship friday and also fix the api timeout` | ✅ |
-| 2 | Browser / Gmail web | (default fallback) | `Hi Tracy, I think we should ship on Friday and also fix the API timeout.` | ✅ (correct default behavior — browser bundle ID has no override) |
-| 3 | Notes | `com.apple.Notes` | `Hi Tracy, I think we should ship on Friday and also fix the API timeout.` | ✅ (Notes prompt is intentionally default-shaped) |
-| 4 | Messages | `com.apple.MobileSMS` | `hi tracy, i think we should ship on friday and also fix the api timeout` | ✅ |
+| 1 | Slack | `com.tinyspeck.slackmacgap` | `hi alex, i think we should ship friday and also fix the api timeout` | ✅ |
+| 2 | Browser / Gmail web | (default fallback) | `Hi Alex, I think we should ship on Friday and also fix the API timeout.` | ✅ (correct default behavior — browser bundle ID has no override) |
+| 3 | Notes | `com.apple.Notes` | `Hi Alex, I think we should ship on Friday and also fix the API timeout.` | ✅ (Notes prompt is intentionally default-shaped) |
+| 4 | Messages | `com.apple.MobileSMS` | `hi alex, i think we should ship on friday and also fix the api timeout` | ✅ |
 
 **Technical phrase (BBEdit differentiation):** "fix the get user request and update the json schema before calling api endpoint"
 

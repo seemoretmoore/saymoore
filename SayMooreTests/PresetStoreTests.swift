@@ -775,9 +775,9 @@ final class PresetStoreTests: XCTestCase {
 
     func testSnippetsLoadFromDisk() throws {
         let url = fileURL()
-        try write(#"{"default":"X{{transcript}}","snippets":{"sig":"— Tracy","email":"a@b.com"}}"#, to: url)
+        try write(#"{"default":"X{{transcript}}","snippets":{"sig":"— Alex","email":"a@b.com"}}"#, to: url)
         let store = PresetStore(fileURL: url, materializeIfMissing: false)
-        XCTAssertEqual(store.snippets(), ["sig": "— Tracy", "email": "a@b.com"])
+        XCTAssertEqual(store.snippets(), ["sig": "— Alex", "email": "a@b.com"])
     }
 
     func testSnippetsEmptyWhenAbsent() throws {
@@ -851,24 +851,24 @@ final class PresetStoreTests: XCTestCase {
     func testExpandSnippetsReplacesInsertTrigger() {
         let out = PresetStore.expandSnippets(
             in: "thanks insert sig please",
-            snippets: ["sig": "— Tracy"]
+            snippets: ["sig": "— Alex"]
         )
-        XCTAssertEqual(out, "thanks — Tracy please")
+        XCTAssertEqual(out, "thanks — Alex please")
     }
 
     func testExpandSnippetsCaseInsensitiveOnName() {
         let out = PresetStore.expandSnippets(
             in: "Hi please Insert SIG to message",
-            snippets: ["sig": "— Tracy"]
+            snippets: ["sig": "— Alex"]
         )
-        XCTAssertEqual(out, "Hi please — Tracy to message")
+        XCTAssertEqual(out, "Hi please — Alex to message")
     }
 
     func testExpandSnippetsDoesNotMatchInsideWords() {
         // "insertsig" without a space → no expansion (word boundary check)
         let out = PresetStore.expandSnippets(
             in: "the insertsig token",
-            snippets: ["sig": "— Tracy"]
+            snippets: ["sig": "— Alex"]
         )
         XCTAssertEqual(out, "the insertsig token")
     }
@@ -877,19 +877,19 @@ final class PresetStoreTests: XCTestCase {
         // Bare snippet name without "insert" → no expansion
         let out = PresetStore.expandSnippets(
             in: "the sig is here",
-            snippets: ["sig": "— Tracy"]
+            snippets: ["sig": "— Alex"]
         )
         XCTAssertEqual(out, "the sig is here")
     }
 
     func testExpandSnippetsLongestNameWinsFirst() {
         // "sig_long" must be tried before "sig" so "insert sig_long" doesn't
-        // expand to "— Tracy_long".
+        // expand to "— Alex_long".
         let out = PresetStore.expandSnippets(
             in: "use insert sig_long today",
-            snippets: ["sig": "— Tracy", "sig_long": "— Tracy Moore, MD"]
+            snippets: ["sig": "— Alex", "sig_long": "— Alex Moore, MD"]
         )
-        XCTAssertEqual(out, "use — Tracy Moore, MD today")
+        XCTAssertEqual(out, "use — Alex Moore, MD today")
     }
 
     func testExpandSnippetsEmptyMapIsNoOp() {

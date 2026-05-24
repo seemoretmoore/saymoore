@@ -9,7 +9,7 @@
 > **Iteration 3 — final, shipping.** Schema becomes `[{phonetic, canonical}]` pairs. `PresetStore.applyVocabSubstitutions(to:vocab:)` runs a case-insensitive, word-boundary-anchored, longest-phonetic-first regex replace on the cleanup output (and on every fallback path) inside `PipelineCoordinator.maybeCleanup`. Deterministic, independent of LLM behavior. `CleanupService` reverted to its pre-vocab signature (no LLM glossary). Bounds (50 entries / 64 B per `phonetic` or `canonical` / 512 B sum) remain in force. User-facing config still hot-reloads via `PresetWatcher`; partial-failure / dedupe / banner pattern preserved.
 
 **Status:** approved 2026-05-14, queued behind Bundle B+C merge.
-**Owner:** Tracy.
+**Owner:** author.
 **Targets:** v1.1 enhancement (no PRD slice collision).
 
 ## Context

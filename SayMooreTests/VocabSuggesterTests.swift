@@ -46,9 +46,9 @@ final class VocabSuggesterTests: XCTestCase {
     }
 
     func testCandidatesSkipsSingleCapitalProperNoun() {
-        // "Tracy" alone is too noisy — every dictation has a sentence-start cap.
-        let out = VocabSuggester.candidates(in: "Tracy went home")
-        XCTAssertFalse(out.contains("Tracy"))
+        // "Alex" alone is too noisy — every dictation has a sentence-start cap.
+        let out = VocabSuggester.candidates(in: "Alex went home")
+        XCTAssertFalse(out.contains("Alex"))
     }
 
     func testCandidatesDeduplicatesByLowercaseFirstAppearance() {

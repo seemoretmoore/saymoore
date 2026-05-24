@@ -2,9 +2,9 @@
 
 ## Context
 
-Tracy has been paying for Glaido (or a similar voice-to-clean-text tool) and wants to replace it with a local, free, durable equivalent. The macOS Dictation built-in is slow, cloud-dependent, and produces unstructured transcripts that need manual cleanup before they're usable in Slack, Mail, Xcode, etc. Voice tools that *do* clean transcripts are subscription products with API costs and outage exposure.
+The author has been paying for Glaido (or a similar voice-to-clean-text tool) and wants to replace it with a local, free, durable equivalent. The macOS Dictation built-in is slow, cloud-dependent, and produces unstructured transcripts that need manual cleanup before they're usable in Slack, Mail, Xcode, etc. Voice tools that *do* clean transcripts are subscription products with API costs and outage exposure.
 
-SayMoore is a single-user, on-device replacement: hit a hotkey, talk, get cleaned text pasted into the focused field, with per-app tone presets. Everything runs on Tracy's M2 Ultra Mac Studio (64GB) — Whisper transcription in-process, Qwen 2.5 7B cleanup via local Ollama. Zero recurring cost, zero network dependency at runtime.
+SayMoore is a single-user, on-device replacement: hit a hotkey, talk, get cleaned text pasted into the focused field, with per-app tone presets. Whisper transcription runs in-process and Qwen 2.5 7B cleanup runs via local Ollama. Zero recurring cost, zero network dependency at runtime.
 
 Goal: **delete macOS Dictation and a paid product in one move**, with a tool that improves over both.
 
@@ -16,11 +16,11 @@ Build a Mac menu-bar app that converts spoken audio into context-appropriately-c
 
 ## Target user
 
-Tracy Moore. One user. No multi-user concerns. No accessibility/i18n requirements beyond what AppKit gives for free.
+The author. Single-user app — no multi-user concerns. No accessibility/i18n requirements beyond what AppKit gives for free.
 
 ## Success criteria (v1.0 ship gate)
 
-1. Average end-to-end latency from "stop talking" to "text appears in field" ≤ 3.0s for ≤30s clips on M2 Ultra.
+1. Average end-to-end latency from "stop talking" to "text appears in field" ≤ 3.0s for ≤30s clips on Apple Silicon.
 2. ≥95% paste accuracy across 20 representative dictations into Slack, Mail, Xcode, Notes, Messages.
 3. 50 consecutive dictations with no leaks, hangs, or restart needed (Instruments-verified).
 4. Fresh-Mac install walkthrough takes ≤5 minutes from "downloaded the .dmg" to "first successful dictation," following only the README.
@@ -31,7 +31,7 @@ Tracy Moore. One user. No multi-user concerns. No accessibility/i18n requirement
 
 ## Locked decisions
 
-(Confirmed during brainstorming and adversarial review. Do not relitigate without explicit Tracy override.)
+(Confirmed during brainstorming and adversarial review. Do not relitigate without explicit author override.)
 
 | Area | Decision |
 |---|---|
@@ -80,7 +80,7 @@ Input transcript:
 {{transcript}}
 ```
 
-The exact wording will be tuned during Slice 3 against real Tracy dictations.
+The exact wording will be tuned during Slice 3 against real dictations.
 
 ---
 
@@ -185,7 +185,7 @@ Persistence (~/Library/Application Support/SayMoore/):
 
 ## Vertical slices
 
-Each slice is end-to-end working software. After each, a `[CHECKPOINT]` for Tracy sign-off. No slice begins until prior is approved.
+Each slice is end-to-end working software. After each, a `[CHECKPOINT]` for author sign-off. No slice begins until prior is approved.
 
 ### Slice 0 — Scaffold + signing + cross-cutting infrastructure
 **Goal:** Empty menu-bar app builds, installs, launches without crash. Signing identity stable across rebuilds. Logger and `SayMooreError` are in place from day one.
@@ -253,7 +253,7 @@ Each slice is end-to-end working software. After each, a `[CHECKPOINT]` for Trac
 **Acceptance (any one of):**
 - ✅ SPM integration succeeds, transcription matches expected text within Whisper's normal error rate, VAD callable from Swift → proceed with Slice 2 as planned.
 - ⚠️ SPM integration succeeds for transcription but VAD is C-only → proceed with Slice 2; revise Slice 5 to call into VAD via a thin C bridge or use a different VAD library.
-- ❌ SPM integration fails or is unstable → fall back to **cold-subprocess `whisper-cli` per dictation** for v1. Accept the ~1.5s model-load overhead; long-running warm-helper subprocess is v1.1 work. Tracy approves the fallback before Slice 2 begins. Revise Slice 2 deliverables only minimally (subprocess invocation + parse stdout) — no IPC, no helper lifecycle management in v1.
+- ❌ SPM integration fails or is unstable → fall back to **cold-subprocess `whisper-cli` per dictation** for v1. Accept the ~1.5s model-load overhead; long-running warm-helper subprocess is v1.1 work. Author approves the fallback before Slice 2 begins. Revise Slice 2 deliverables only minimally (subprocess invocation + parse stdout) — no IPC, no helper lifecycle management in v1.
 
 **Test plan:** the spike itself is the test. No unit tests; output is the writeup + decision.
 
@@ -504,7 +504,7 @@ Each slice is end-to-end working software. After each, a `[CHECKPOINT]` for Trac
 **Deliverables:** README with install, one-time setup (Ollama install + `ollama pull`, signing script), permissions, hotkey, presets editing, troubleshooting. Screenshots, demo gif. Stress-test pass: 50 consecutive dictations + Instruments memory snapshot.
 
 **Acceptance:**
-- README walkthrough followed by Tracy on a second account / fresh install: working in ≤5 min.
+- README walkthrough followed by the author on a second account / fresh install: working in ≤5 min.
 - 50 dictations: no crashes, RAM stable (±50MB), file handles stable.
 - No `// TODO` / `// FIXME` left in main without a corresponding issue.
 - All four permissions revoke/grant cycle tested.
@@ -617,11 +617,11 @@ After all slices ship:
 
 ---
 
-## Next actions on Tracy approval
+## Next actions on author approval
 
 1. Run a second-pass review (codex) against this revised PRD before any code is written.
 2. Fold in items 12–19 (or revisions per second pass) and ship final PRD.
 3. Move PRD to `docs/PRD.md` in the repo.
-4. Initialize git repo at `/Users/tracy/tracy_ai_sandbox/saymoore`, push to `github.com/seemoretmoore/saymoore` (public, MIT, per locked decision).
+4. Initialize git repo locally, push to `github.com/seemoretmoore/saymoore` (public, MIT, per locked decision).
 5. Create GitHub Project board with one issue per slice, ordered, labeled, with acceptance criteria.
-6. Begin **Slice 0** on Tracy's "approved, start Slice 0" message.
+6. Begin **Slice 0** on author's "approved, start Slice 0" message.

@@ -32,7 +32,7 @@ project-specific identifiers without regressing common-English transcription.
 
 Dictate each:
 
-- F1 — *"hi tracy, i think we should ship friday and also fix the api timeout"*
+- F1 — *"hi alex, i think we should ship friday and also fix the api timeout"*
 - F2 — *"add a unit test for the cleanup service"*
 - F3 — *"the meeting is at three pm tomorrow"*
 

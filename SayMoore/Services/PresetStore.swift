@@ -389,9 +389,9 @@ final class PresetStore: PresetResolving, @unchecked Sendable {
     /// Caveat — substitutions cascade: each iteration runs against the
     /// running result, not the original text, so a later entry's phonetic
     /// CAN match characters introduced by an earlier entry's canonical
-    /// (e.g. `{phonetic:"hi tracy", canonical:"Hi Tracy Park"}` plus
-    /// `{phonetic:"park", canonical:"Parker"}` rewrites "hi tracy" to
-    /// "Hi Tracy Parker"). Safe for the bundled vocabulary — all default
+    /// (e.g. `{phonetic:"hi alex", canonical:"Hi Alex Park"}` plus
+    /// `{phonetic:"park", canonical:"Parker"}` rewrites "hi alex" to
+    /// "Hi Alex Parker"). Safe for the bundled vocabulary — all default
     /// canonicals are joined-identifier form with no internal word
     /// boundaries — but users authoring multi-word canonicals should avoid
     /// pairs where one entry's phonetic appears inside another's canonical.
