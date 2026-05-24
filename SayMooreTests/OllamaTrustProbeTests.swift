@@ -2,11 +2,39 @@ import XCTest
 @testable import SayMoore
 
 /// Reference-type flag so @Sendable closures can record without capturing a `var`.
-private final class CalledFlag: @unchecked Sendable {
-    private let lock = NSLock()
+/// Actor-isolated for Swift 6 strict concurrency (NSLock is unavailable in async contexts).
+private actor CalledFlag {
     private var fired = false
-    func fire() { lock.lock(); fired = true; lock.unlock() }
-    var value: Bool { lock.lock(); defer { lock.unlock() }; return fired }
+    func fire() { fired = true }
+    func get() -> Bool { fired }
+}
+
+private actor CodesignStub {
+    private var responses: [OllamaTrustProbe.CodesignInvocation: OllamaTrustProbe.CodesignProcessResult]
+    private(set) var invocations: [(OllamaTrustProbe.CodesignInvocation, String)] = []
+
+    init(
+        verify: OllamaTrustProbe.CodesignProcessResult = .init(exitCode: 0, output: ""),
+        describe: OllamaTrustProbe.CodesignProcessResult = .init(
+            exitCode: 0,
+            output: """
+            Executable=/opt/homebrew/bin/ollama
+            TeamIdentifier=FX44YY62GV
+            Authority=Developer ID Application: Ollama, Inc. (FX44YY62GV)
+            Authority=Developer ID Certification Authority
+            Authority=Apple Root CA
+            """
+        )
+    ) {
+        self.responses = [.verify: verify, .describe: describe]
+    }
+
+    func run(_ invocation: OllamaTrustProbe.CodesignInvocation, _ path: String) -> OllamaTrustProbe.CodesignProcessResult {
+        invocations.append((invocation, path))
+        return responses[invocation] ?? .init(exitCode: 1, output: "missing stub")
+    }
+
+    var invocationCount: Int { invocations.count }
 }
 
 final class OllamaTrustProbeTests: XCTestCase {
@@ -44,15 +72,31 @@ final class OllamaTrustProbeTests: XCTestCase {
         pids.map { "p\($0)\nn127.0.0.1:11434" }.joined(separator: "\n")
     }
 
+    private func trustedProbe(
+        session: URLSession,
+        lsof: String,
+        binaryPathResolver: @escaping @Sendable (Int32) -> String?,
+        codesignStub: CodesignStub = CodesignStub(),
+        metadata: OllamaTrustProbe.BinaryFileMetadata? = .init(modificationTime: 1_000, size: 42_000)
+    ) -> OllamaTrustProbe {
+        OllamaTrustProbe(
+            session: session,
+            lsofRunner: { lsof },
+            binaryPathResolver: binaryPathResolver,
+            binaryMetadataProvider: { _ in metadata },
+            codesignRunner: { invocation, path in await codesignStub.run(invocation, path) }
+        )
+    }
+
     // MARK: - Version endpoint + known-good binary
 
     func testTrustedResultWithValidJSONAndKnownOllamaApp() async throws {
         let data = try XCTUnwrap(#"{"version":"0.1.32"}"#.data(using: .utf8))
         let session = makeSession(responding: data)
         let lsof = ollamaLsof(pid: 42)
-        let probe = OllamaTrustProbe(
+        let probe = trustedProbe(
             session: session,
-            lsofRunner: { lsof },
+            lsof: lsof,
             binaryPathResolver: { _ in "/Applications/Ollama.app/Contents/MacOS/ollama" }
         )
         let result = await probe.probe()
@@ -65,9 +109,9 @@ final class OllamaTrustProbeTests: XCTestCase {
         let data = try XCTUnwrap(#"{"version":"0.1.32"}"#.data(using: .utf8))
         let session = makeSession(responding: data)
         let lsof = ollamaLsof(pid: 99)
-        let probe = OllamaTrustProbe(
+        let probe = trustedProbe(
             session: session,
-            lsofRunner: { lsof },
+            lsof: lsof,
             binaryPathResolver: { _ in "/opt/homebrew/bin/ollama" }
         )
         let result = await probe.probe()
@@ -82,9 +126,9 @@ final class OllamaTrustProbeTests: XCTestCase {
         let data = try XCTUnwrap("<html>error</html>".data(using: .utf8))
         let session = makeSession(responding: data)
         let lsof = ollamaLsof()
-        let probe = OllamaTrustProbe(
+        let probe = trustedProbe(
             session: session,
-            lsofRunner: { lsof },
+            lsof: lsof,
             binaryPathResolver: { _ in "/Applications/Ollama.app/Contents/MacOS/ollama" }
         )
         let result = await probe.probe()
@@ -97,9 +141,9 @@ final class OllamaTrustProbeTests: XCTestCase {
         let data = try XCTUnwrap(#"{"status":"ok"}"#.data(using: .utf8))
         let session = makeSession(responding: data)
         let lsof = ollamaLsof()
-        let probe = OllamaTrustProbe(
+        let probe = trustedProbe(
             session: session,
-            lsofRunner: { lsof },
+            lsof: lsof,
             binaryPathResolver: { _ in "/Applications/Ollama.app/Contents/MacOS/ollama" }
         )
         let result = await probe.probe()
@@ -117,7 +161,7 @@ final class OllamaTrustProbeTests: XCTestCase {
         let probe = OllamaTrustProbe(
             session: session,
             lsofRunner: {
-                called.fire()
+                await called.fire()
                 return "p42\nn127.0.0.1:11434"
             },
             binaryPathResolver: { _ in "/Applications/Ollama.app/Contents/MacOS/ollama" }
@@ -126,7 +170,8 @@ final class OllamaTrustProbeTests: XCTestCase {
         guard case .untrustedEndpoint = result else {
             return XCTFail("expected .untrustedEndpoint on network error, got \(result)")
         }
-        XCTAssertFalse(called.value, "lsof must not be called when HTTP check fails")
+        let wasCalled = await called.get()
+        XCTAssertFalse(wasCalled, "lsof must not be called when HTTP check fails")
     }
 
     /// M4: connection refused (cannotConnectToHost) → untrusted, no lsof.
@@ -136,7 +181,7 @@ final class OllamaTrustProbeTests: XCTestCase {
         let probe = OllamaTrustProbe(
             session: session,
             lsofRunner: {
-                called.fire()
+                await called.fire()
                 return nil
             },
             binaryPathResolver: { _ in nil }
@@ -145,7 +190,8 @@ final class OllamaTrustProbeTests: XCTestCase {
         guard case .untrustedEndpoint = result else {
             return XCTFail("expected .untrustedEndpoint on connection refused, got \(result)")
         }
-        XCTAssertFalse(called.value, "lsof must not be called when HTTP check fails")
+        let wasCalled = await called.get()
+        XCTAssertFalse(wasCalled, "lsof must not be called when HTTP check fails")
     }
 
     // MARK: - Unknown binary → untrusted
@@ -154,9 +200,9 @@ final class OllamaTrustProbeTests: XCTestCase {
         let data = try XCTUnwrap(#"{"version":"0.1.32"}"#.data(using: .utf8))
         let session = makeSession(responding: data)
         let lsof = ollamaLsof(pid: 9999)
-        let probe = OllamaTrustProbe(
+        let probe = trustedProbe(
             session: session,
-            lsofRunner: { lsof },
+            lsof: lsof,
             binaryPathResolver: { _ in "/usr/bin/some-other-service" }
         )
         let result = await probe.probe()
@@ -188,9 +234,9 @@ final class OllamaTrustProbeTests: XCTestCase {
         let data = try XCTUnwrap(#"{"version":"0.1.32"}"#.data(using: .utf8))
         let session = makeSession(responding: data)
         let lsof = ollamaLsofMultiple(pids: [10, 11])
-        let probe = OllamaTrustProbe(
+        let probe = trustedProbe(
             session: session,
-            lsofRunner: { lsof },
+            lsof: lsof,
             binaryPathResolver: { _ in "/Applications/Ollama.app/Contents/MacOS/ollama" }
         )
         let result = await probe.probe()
@@ -205,9 +251,9 @@ final class OllamaTrustProbeTests: XCTestCase {
         let session = makeSession(responding: data)
         // pids 10 and 11 present; pid 11 will resolve to a rogue path
         let lsof = ollamaLsofMultiple(pids: [10, 11])
-        let probe = OllamaTrustProbe(
+        let probe = trustedProbe(
             session: session,
-            lsofRunner: { lsof },
+            lsof: lsof,
             binaryPathResolver: { pid in
                 pid == 10 ? "/Applications/Ollama.app/Contents/MacOS/ollama" : "/usr/bin/nc"
             }
@@ -242,9 +288,9 @@ final class OllamaTrustProbeTests: XCTestCase {
         let session = makeSession(responding: data)
         let lsof = ollamaLsof(pid: 7)
         // Simulates a binary installed under a user's ~/Applications (bypass attempt)
-        let probe = OllamaTrustProbe(
+        let probe = trustedProbe(
             session: session,
-            lsofRunner: { lsof },
+            lsof: lsof,
             binaryPathResolver: { _ in "/Users/attacker/Applications/Ollama.app/Contents/MacOS/ollama" }
         )
         let result = await probe.probe()
@@ -258,9 +304,9 @@ final class OllamaTrustProbeTests: XCTestCase {
         let data = try XCTUnwrap(#"{"version":"0.1.32"}"#.data(using: .utf8))
         let session = makeSession(responding: data)
         let lsof = ollamaLsof(pid: 8)
-        let probe = OllamaTrustProbe(
+        let probe = trustedProbe(
             session: session,
-            lsofRunner: { lsof },
+            lsof: lsof,
             binaryPathResolver: { _ in "/Applications/Ollama.app/Contents/MacOS/ollama" }
         )
         let result = await probe.probe()
@@ -274,15 +320,95 @@ final class OllamaTrustProbeTests: XCTestCase {
         let data = try XCTUnwrap(#"{"version":"0.1.32"}"#.data(using: .utf8))
         let session = makeSession(responding: data)
         let lsof = ollamaLsof(pid: 9)
-        let probe = OllamaTrustProbe(
+        let probe = trustedProbe(
             session: session,
-            lsofRunner: { lsof },
+            lsof: lsof,
             binaryPathResolver: { _ in "/usr/local/bin/ollama" }
         )
         let result = await probe.probe()
         guard case .trusted = result else {
             return XCTFail("expected .trusted for /usr/local/bin/ollama, got \(result)")
         }
+    }
+
+    func testExpectedPathFailsClosedWhenBinaryMetadataMissing() async throws {
+        let data = try XCTUnwrap(#"{"version":"0.1.32"}"#.data(using: .utf8))
+        let session = makeSession(responding: data)
+        let probe = trustedProbe(
+            session: session,
+            lsof: ollamaLsof(pid: 9),
+            binaryPathResolver: { _ in "/usr/local/bin/ollama" },
+            metadata: nil
+        )
+        let result = await probe.probe()
+        guard case .probeFailed(let error) = result else {
+            return XCTFail("expected .probeFailed for missing binary metadata, got \(result)")
+        }
+        XCTAssertTrue(String(describing: error).contains("not found"))
+    }
+
+    func testCodesignVerifyFailureFailsClosedWithError() async throws {
+        let data = try XCTUnwrap(#"{"version":"0.1.32"}"#.data(using: .utf8))
+        let session = makeSession(responding: data)
+        let codesign = CodesignStub(verify: .init(exitCode: 1, output: "code object is not signed at all"))
+        let probe = trustedProbe(
+            session: session,
+            lsof: ollamaLsof(pid: 9),
+            binaryPathResolver: { _ in "/usr/local/bin/ollama" },
+            codesignStub: codesign
+        )
+        let result = await probe.probe()
+        guard case .probeFailed(let error) = result else {
+            return XCTFail("expected .probeFailed for codesign verify failure, got \(result)")
+        }
+        XCTAssertTrue(String(describing: error).contains("codesign --verify failed"))
+    }
+
+    func testWrongTeamIdentifierFailsClosedWithError() async throws {
+        let data = try XCTUnwrap(#"{"version":"0.1.32"}"#.data(using: .utf8))
+        let session = makeSession(responding: data)
+        let codesign = CodesignStub(
+            describe: .init(
+                exitCode: 0,
+                output: """
+                TeamIdentifier=BADTEAM123
+                Authority=Developer ID Application: Mallory LLC (BADTEAM123)
+                Authority=Developer ID Certification Authority
+                """
+            )
+        )
+        let probe = trustedProbe(
+            session: session,
+            lsof: ollamaLsof(pid: 9),
+            binaryPathResolver: { _ in "/usr/local/bin/ollama" },
+            codesignStub: codesign
+        )
+        let result = await probe.probe()
+        guard case .probeFailed(let error) = result else {
+            return XCTFail("expected .probeFailed for wrong team identifier, got \(result)")
+        }
+        XCTAssertTrue(String(describing: error).contains("unexpected TeamIdentifier"))
+    }
+
+    func testCodesignVerificationIsCachedByPathMtimeAndSize() async throws {
+        let data = try XCTUnwrap(#"{"version":"0.1.32"}"#.data(using: .utf8))
+        let session = makeSession(responding: data)
+        let codesign = CodesignStub()
+        let probe = trustedProbe(
+            session: session,
+            lsof: ollamaLsof(pid: 9),
+            binaryPathResolver: { _ in "/usr/local/bin/ollama" },
+            codesignStub: codesign
+        )
+
+        guard case .trusted = await probe.probe() else {
+            return XCTFail("first probe should trust stubbed signed binary")
+        }
+        guard case .trusted = await probe.probe() else {
+            return XCTFail("second probe should trust cached signed binary")
+        }
+        let count = await codesign.invocationCount
+        XCTAssertEqual(count, 2, "verify and describe should run only once for unchanged binary metadata")
     }
 }
 
