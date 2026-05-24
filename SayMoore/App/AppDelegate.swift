@@ -121,7 +121,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 coordinator?.blocked = true
                 NotificationCenterAdapter.shared.notify(
                     title: "SayMoore",
-                    body: "Couldn't verify Ollama trust — dictation paused. Check Console for details."
+                    body: "Couldn't verify Ollama trust — dictation paused. \(error.localizedDescription)"
                 )
                 Log.app.fault("ollama endpoint trust probe failed — dictation blocked: \(String(describing: error), privacy: .public)")
             }
