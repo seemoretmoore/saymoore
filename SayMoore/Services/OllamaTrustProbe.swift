@@ -26,6 +26,11 @@ actor OllamaTrustProbe {
     private let lsofRunner: @Sendable () async -> String?
     /// Resolves a binary path for a given PID; returns nil when unknown.
     private let binaryPathResolver: @Sendable (Int32) -> String?
+    /// Returns file metadata for cache invalidation; nil means the binary does not exist.
+    private let binaryMetadataProvider: @Sendable (String) -> BinaryFileMetadata?
+    /// Runs codesign verification/details commands.
+    private let codesignRunner: @Sendable (CodesignInvocation, String) async -> CodesignProcessResult
+    private var binaryVerificationCache: [BinaryVerificationCacheKey: Result<Void, Error>] = [:]
 
     /// Production initializer.
     init() {
@@ -40,17 +45,31 @@ actor OllamaTrustProbe {
         self.binaryPathResolver = { pid in
             OllamaTrustProbe.resolveBinaryPath(pid: pid)
         }
+        self.binaryMetadataProvider = { path in
+            OllamaTrustProbe.binaryMetadata(path: path)
+        }
+        self.codesignRunner = { invocation, path in
+            await Task.detached { OllamaTrustProbe.runCodesign(invocation, path: path) }.value
+        }
     }
 
     /// Testability initializer.
     init(
         session: URLSession,
         lsofRunner: @escaping @Sendable () async -> String?,
-        binaryPathResolver: @escaping @Sendable (Int32) -> String? = { _ in nil }
+        binaryPathResolver: @escaping @Sendable (Int32) -> String? = { _ in nil },
+        binaryMetadataProvider: @escaping @Sendable (String) -> BinaryFileMetadata? = { path in
+            OllamaTrustProbe.binaryMetadata(path: path)
+        },
+        codesignRunner: @escaping @Sendable (CodesignInvocation, String) async -> CodesignProcessResult = { invocation, path in
+            await Task.detached { OllamaTrustProbe.runCodesign(invocation, path: path) }.value
+        }
     ) {
         self.session = session
         self.lsofRunner = lsofRunner
         self.binaryPathResolver = binaryPathResolver
+        self.binaryMetadataProvider = binaryMetadataProvider
+        self.codesignRunner = codesignRunner
     }
 
     /// Run the probe. Returns `.trusted`, `.untrustedEndpoint`, or `.probeFailed`.
@@ -75,10 +94,12 @@ actor OllamaTrustProbe {
 
         // Step 2: owning process identity check — ALL PIDs must be acceptable.
         let lsofOutput = await lsofRunner()
-        return validateOwningProcess(lsofOutput: lsofOutput)
+        return await validateOwningProcess(lsofOutput: lsofOutput)
     }
 
     // MARK: - Private
+
+    static let ollamaTeamIdentifier = "FX44YY62GV"
 
     /// M4: HTTP check is liveness only. Returns `.failure` on network error so the
     /// caller can distinguish "no listener" from "bad binary".
@@ -104,7 +125,7 @@ actor OllamaTrustProbe {
     }
 
     /// M1: Every PID in lsof output must pass `isAcceptableBinary`. One rogue PID → `.untrustedEndpoint`.
-    private func validateOwningProcess(lsofOutput: String?) -> OllamaTrustResult {
+    private func validateOwningProcess(lsofOutput: String?) async -> OllamaTrustResult {
         guard let output = lsofOutput, !output.isEmpty else {
             return .untrustedEndpoint
         }
@@ -113,8 +134,20 @@ actor OllamaTrustProbe {
             return .untrustedEndpoint
         }
         for pid in pids {
-            guard let path = binaryPathResolver(pid), isAcceptableBinary(path: path) else {
+            guard let path = binaryPathResolver(pid) else {
                 return .untrustedEndpoint
+            }
+            let verification = await verifyAcceptableBinary(path: path)
+            switch verification {
+            case .success:
+                break
+            case .failure(let error as OllamaTrustProbeError):
+                if error.isPathRejection {
+                    return .untrustedEndpoint
+                }
+                return .probeFailed(error)
+            case .failure(let error):
+                return .probeFailed(error)
             }
         }
         return .trusted
@@ -129,26 +162,169 @@ actor OllamaTrustProbe {
             }
     }
 
-    /// C2: Standardize path and use `hasPrefix` against fixed allowed roots.
+    /// C2: Standardize path and require fixed allowed roots before expensive signature checks.
     /// `~/Applications/Ollama.app/` is intentionally excluded: user-writable directories
     /// are not trustworthy for binary identity. A fault log is emitted so users who
     /// install Ollama in ~/Applications get a clear diagnostic.
-    private func isAcceptableBinary(path: String) -> Bool {
+    private func verifyAcceptableBinary(path: String) async -> Result<Void, Error> {
         let standardized = URL(fileURLWithPath: path).standardized.path
-        if standardized.hasPrefix("/Applications/Ollama.app/")
-            || standardized.hasPrefix("/opt/homebrew/")
-            || standardized.hasPrefix("/usr/local/") {
-            return true
+        guard isExpectedOllamaPath(standardized) else {
+            logUserScopedApplicationsInstallIfNeeded(standardized)
+            return .failure(OllamaTrustProbeError.unexpectedPath(standardized))
         }
-        // Diagnostic for ~/Applications install (common on macOS): log clearly and reject.
+
+        guard let metadata = binaryMetadataProvider(standardized) else {
+            return .failure(OllamaTrustProbeError.binaryNotFound(path: standardized))
+        }
+
+        let cacheKey = BinaryVerificationCacheKey(path: standardized, metadata: metadata)
+        if let cached = binaryVerificationCache[cacheKey] {
+            return cached
+        }
+
+        let result = await verifyCodesign(path: standardized)
+        binaryVerificationCache[cacheKey] = result
+        return result
+    }
+
+    private func isExpectedOllamaPath(_ path: String) -> Bool {
+        path.hasPrefix("/Applications/Ollama.app/")
+            || path == "/opt/homebrew/bin/ollama"
+            || path == "/usr/local/bin/ollama"
+    }
+
+    private func logUserScopedApplicationsInstallIfNeeded(_ standardized: String) {
         let homeBased = (("~/Applications/Ollama.app/" as NSString).expandingTildeInPath)
         if standardized.hasPrefix(homeBased) {
             Log.app.fault("ollama binary found in ~/Applications — user-writable path not trusted; move to /Applications")
         }
-        return false
+    }
+
+    private func verifyCodesign(path: String) async -> Result<Void, Error> {
+        let verify = await codesignRunner(.verify, path)
+        guard verify.exitCode == 0 else {
+            return .failure(OllamaTrustProbeError.codesignVerifyFailed(path: path, output: verify.output))
+        }
+
+        let describe = await codesignRunner(.describe, path)
+        guard describe.exitCode == 0 else {
+            return .failure(OllamaTrustProbeError.codesignDescribeFailed(path: path, output: describe.output))
+        }
+
+        let details = CodesignDetails(output: describe.output)
+        guard let teamIdentifier = details.teamIdentifier else {
+            return .failure(OllamaTrustProbeError.missingTeamIdentifier(path: path, authorities: details.authorities))
+        }
+        guard teamIdentifier == Self.ollamaTeamIdentifier else {
+            return .failure(OllamaTrustProbeError.unexpectedTeamIdentifier(
+                path: path,
+                expected: Self.ollamaTeamIdentifier,
+                actual: teamIdentifier,
+                authorities: details.authorities
+            ))
+        }
+        guard details.hasDeveloperIDAuthority else {
+            return .failure(OllamaTrustProbeError.missingDeveloperIDAuthority(path: path, authorities: details.authorities))
+        }
+        return .success(())
     }
 
     // MARK: - Static helpers (used by production closures)
+
+    enum CodesignInvocation: Hashable, Sendable {
+        case verify
+        case describe
+    }
+
+    struct CodesignProcessResult: Sendable {
+        let exitCode: Int32
+        let output: String
+    }
+
+    struct BinaryFileMetadata: Hashable, Sendable {
+        let modificationTime: TimeInterval
+        let size: UInt64
+    }
+
+    private struct BinaryVerificationCacheKey: Hashable {
+        let path: String
+        let modificationTime: TimeInterval
+        let size: UInt64
+
+        init(path: String, metadata: BinaryFileMetadata) {
+            self.path = path
+            self.modificationTime = metadata.modificationTime
+            self.size = metadata.size
+        }
+    }
+
+    private struct CodesignDetails {
+        let teamIdentifier: String?
+        let authorities: [String]
+
+        init(output: String) {
+            var parsedTeamIdentifier: String?
+            var parsedAuthorities: [String] = []
+            for line in output.components(separatedBy: .newlines) {
+                if line.hasPrefix("TeamIdentifier=") {
+                    parsedTeamIdentifier = String(line.dropFirst("TeamIdentifier=".count))
+                } else if line.hasPrefix("Authority=") {
+                    parsedAuthorities.append(String(line.dropFirst("Authority=".count)))
+                }
+            }
+            self.teamIdentifier = parsedTeamIdentifier
+            self.authorities = parsedAuthorities
+        }
+
+        var hasDeveloperIDAuthority: Bool {
+            authorities.contains { $0.hasPrefix("Developer ID Application:") }
+                && authorities.contains("Developer ID Certification Authority")
+                && authorities.contains("Apple Root CA")
+        }
+    }
+
+    enum OllamaTrustProbeError: LocalizedError, CustomStringConvertible {
+        case unexpectedPath(String)
+        case binaryNotFound(path: String)
+        case codesignVerifyFailed(path: String, output: String)
+        case codesignDescribeFailed(path: String, output: String)
+        case missingTeamIdentifier(path: String, authorities: [String])
+        case unexpectedTeamIdentifier(path: String, expected: String, actual: String, authorities: [String])
+        case missingDeveloperIDAuthority(path: String, authorities: [String])
+
+        var isPathRejection: Bool {
+            if case .unexpectedPath = self { return true }
+            return false
+        }
+
+        var errorDescription: String? {
+            switch self {
+            case .unexpectedPath(let path):
+                return "Ollama binary is not in a trusted install location: \(path)"
+            case .binaryNotFound(let path):
+                return "Ollama binary not found at expected path: \(path)"
+            case .codesignVerifyFailed(let path, let output):
+                return "codesign --verify failed for Ollama binary at \(path): \(trimmed(output))"
+            case .codesignDescribeFailed(let path, let output):
+                return "codesign -dvv failed for Ollama binary at \(path): \(trimmed(output))"
+            case .missingTeamIdentifier(let path, let authorities):
+                return "Ollama binary at \(path) has no TeamIdentifier. Authorities: \(authorities.joined(separator: " | "))"
+            case .unexpectedTeamIdentifier(let path, let expected, let actual, let authorities):
+                return "Ollama binary at \(path) has unexpected TeamIdentifier \(actual); expected \(expected). Authorities: \(authorities.joined(separator: " | "))"
+            case .missingDeveloperIDAuthority(let path, let authorities):
+                return "Ollama binary at \(path) is missing the expected Developer ID authority chain. Authorities: \(authorities.joined(separator: " | "))"
+            }
+        }
+
+        var description: String {
+            errorDescription ?? "Ollama trust probe failed"
+        }
+
+        private func trimmed(_ output: String) -> String {
+            let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? "<no output>" : trimmed
+        }
+    }
 
     /// Resolve the binary path of a PID using `proc_pidpath` from libproc.
     ///
@@ -192,5 +368,41 @@ actor OllamaTrustProbe {
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
         return String(data: data, encoding: .utf8)
+    }
+
+    static func binaryMetadata(path: String) -> BinaryFileMetadata? {
+        do {
+            let attributes = try FileManager.default.attributesOfItem(atPath: path)
+            guard let modificationDate = attributes[.modificationDate] as? Date else {
+                return nil
+            }
+            let fileSize = (attributes[.size] as? NSNumber)?.uint64Value ?? 0
+            return BinaryFileMetadata(modificationTime: modificationDate.timeIntervalSince1970, size: fileSize)
+        } catch {
+            return nil
+        }
+    }
+
+    static func runCodesign(_ invocation: CodesignInvocation, path: String) -> CodesignProcessResult {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
+        switch invocation {
+        case .verify:
+            process.arguments = ["--verify", "--deep", "--strict", path]
+        case .describe:
+            process.arguments = ["-dvv", path]
+        }
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+        do {
+            try process.run()
+        } catch {
+            return CodesignProcessResult(exitCode: 127, output: String(describing: error))
+        }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        let output = String(data: data, encoding: .utf8) ?? ""
+        return CodesignProcessResult(exitCode: process.terminationStatus, output: output)
     }
 }
