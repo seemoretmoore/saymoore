@@ -945,6 +945,54 @@ final class PresetStoreTests: XCTestCase {
         XCTAssertEqual(PresetStore.biasHint(from: vocab), "Alpha, Beta, Gamma")
     }
 
+    // MARK: - Upgrade-read path bounds
+
+    func testUpgradeMergeRejectsOversizeOnDiskFile() throws {
+        // ~600KB file (> 512KB cap). The upgrade-merge read path must apply
+        // the same cap as loadFromDisk — otherwise a runaway / tampered file
+        // could be re-serialized verbatim back to disk through the upgrade
+        // door, bypassing the bound enforced on the normal load path.
+        let url = fileURL()
+        let padding = String(repeating: "x", count: 600 * 1024)
+        try write("{\"default\":\"OLD {{transcript}}\",\"_pad\":\"\(padding)\"}", to: url)
+        let store = PresetStore(fileURL: url, materializeIfMissing: false)
+
+        // applyUpgrade(.merge) swallows the read error and treats disk as
+        // empty, then writes a fresh bundled-default payload. The crucial
+        // observable: the oversized `_pad` field MUST NOT survive into the
+        // post-upgrade file.
+        try store.applyUpgrade(.merge)
+
+        let postBytes = try Data(contentsOf: url)
+        XCTAssertLessThan(postBytes.count, PresetStore.maxFileBytes,
+                          "post-upgrade file must be within size cap")
+        let obj = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: postBytes) as? [String: Any]
+        )
+        XCTAssertNil(obj["_pad"], "oversized field must not survive upgrade merge")
+        XCTAssertEqual(obj["$schemaVersion"] as? Int, PresetStore.bundledSchemaVersion)
+        XCTAssertNotNil(obj["default"] as? String)
+    }
+
+    func testUpgradeDismissRejectsOversizeOnDiskFile() throws {
+        // Same guarantee for the .dismiss path: if the on-disk file is over
+        // the cap, the upgrade-read should refuse to round-trip it.
+        let url = fileURL()
+        let padding = String(repeating: "x", count: 600 * 1024)
+        try write("{\"default\":\"OLD {{transcript}}\",\"_pad\":\"\(padding)\"}", to: url)
+        let store = PresetStore(fileURL: url, materializeIfMissing: false)
+
+        try store.applyUpgrade(.dismiss)
+
+        let postBytes = try Data(contentsOf: url)
+        XCTAssertLessThan(postBytes.count, PresetStore.maxFileBytes)
+        let obj = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: postBytes) as? [String: Any]
+        )
+        XCTAssertNil(obj["_pad"], "oversized field must not survive upgrade dismiss")
+        XCTAssertEqual(obj["$schemaVersion"] as? Int, PresetStore.bundledSchemaVersion)
+    }
+
     func testBundledExampleJsonHasSchemaVersion() throws {
         // Drift test: bundled JSON must always carry a $schemaVersion that
         // matches the in-code constant. If you bump bundledSchemaVersion, you

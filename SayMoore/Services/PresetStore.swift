@@ -574,11 +574,33 @@ final class PresetStore: PresetResolving, @unchecked Sendable {
     }
 
     /// Read the on-disk presets file as a raw `[String: Any]` dict. Used by
-    /// the upgrade-merge path to preserve user fields verbatim. Unbounded
-    /// in size — `loadFromDisk` already enforces the 512 KB cap on the load
-    /// path; for the upgrade path we trust what's already there.
+    /// the upgrade-merge path to preserve user fields verbatim. Applies the
+    /// same `maxFileBytes` cap as `loadFromDisk` so a tampered or runaway
+    /// file can't bypass the bound by entering through the upgrade path.
     private static func readRawJSON(at url: URL) throws -> [String: Any] {
-        let data = try Data(contentsOf: url)
+        let attrs: [FileAttributeKey: Any]
+        do {
+            attrs = try FileManager.default.attributesOfItem(atPath: url.path)
+        } catch {
+            throw PresetStoreError.fileUnreadable(error.localizedDescription)
+        }
+        if (attrs[.type] as? FileAttributeType) != .typeRegular {
+            throw PresetStoreError.notRegularFile
+        }
+
+        let data: Data
+        do {
+            let handle = try FileHandle(forReadingFrom: url)
+            defer { try? handle.close() }
+            data = try handle.read(upToCount: maxFileBytes + 1) ?? Data()
+        } catch {
+            throw PresetStoreError.fileUnreadable(error.localizedDescription)
+        }
+
+        if data.count > maxFileBytes {
+            throw PresetStoreError.fileTooLarge(bytes: data.count)
+        }
+
         guard let dict = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw PresetStoreError.malformedJSON("expected object at top level")
         }
