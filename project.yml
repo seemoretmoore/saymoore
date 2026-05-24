@@ -75,6 +75,14 @@ targets:
           - "$(CODE_SIGN_IDENTITY)"
         script: |
           set -e
+          # On CI runners, code signing is disabled entirely (no self-signed
+          # identity in the keychain). Skip the assert — CI's job is to
+          # confirm the code compiles and tests pass, not to validate
+          # release-shaped signing.
+          if [ -n "${CI:-}" ]; then
+            echo "note: CI=$CI, skipping non-adhoc signing assert"
+            exit 0
+          fi
           APP="${BUILT_PRODUCTS_DIR}/${WRAPPER_NAME}"
           # During the test action this script can run before SayMooreTests has
           # finished writing its xctest bundle contents. An incomplete embedded

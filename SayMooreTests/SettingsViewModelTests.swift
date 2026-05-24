@@ -7,7 +7,6 @@ final class SettingsViewModelTests: XCTestCase {
     private var tmpDir: URL!
 
     override func setUp() async throws {
-        try await super.setUp()
         let base = FileManager.default.temporaryDirectory
             .appendingPathComponent("SettingsVMTests-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
@@ -17,7 +16,6 @@ final class SettingsViewModelTests: XCTestCase {
     override func tearDown() async throws {
         if let dir = tmpDir { try? FileManager.default.removeItem(at: dir) }
         UserDefaults.standard.removeObject(forKey: "audio.feedback.muted")
-        try await super.tearDown()
     }
 
     private func makeStore(initial: String = #"{"default":"X{{transcript}}"}"#) throws -> PresetStore {

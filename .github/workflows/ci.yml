@@ -16,7 +16,7 @@ jobs:
   build-and-test:
     name: Build + Test
     runs-on: macos-15
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -25,7 +25,32 @@ jobs:
         run: xcodebuild -version
 
       - name: Install tools
-        run: brew install xcodegen xcbeautify
+        run: brew install xcodegen xcbeautify cmake
+
+      # The xcframework is 200MB and gitignored. Cache by the setup-whisper
+      # script contents (which pin tag + SHA) so a cold cache is the only
+      # time we pay the ~5min build.
+      - name: Cache whisper.xcframework
+        id: cache-whisper
+        uses: actions/cache@v4
+        with:
+          path: Vendor/whisper.xcframework
+          key: whisper-${{ runner.os }}-${{ hashFiles('scripts/setup-whisper.sh') }}
+
+      - name: Build whisper.xcframework (cold cache only)
+        if: steps.cache-whisper.outputs.cache-hit != 'true'
+        run: bash scripts/setup-whisper.sh
+
+      - name: Cache silero_vad.onnx
+        id: cache-silero
+        uses: actions/cache@v4
+        with:
+          path: Vendor/silero-vad
+          key: silero-${{ runner.os }}-${{ hashFiles('scripts/setup-silero.sh') }}
+
+      - name: Vendor silero_vad.onnx (cold cache only)
+        if: steps.cache-silero.outputs.cache-hit != 'true'
+        run: bash scripts/setup-silero.sh
 
       - name: Generate Xcode project
         run: ./scripts/generate-project.sh
