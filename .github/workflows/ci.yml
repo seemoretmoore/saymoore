@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  # Also run on direct pushes to main (covers the admin-override case + the
+  # very first PR before branch protection is enabled).
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: Build + Test
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Install tools
+        run: brew install xcodegen xcbeautify
+
+      - name: Generate Xcode project
+        run: ./scripts/generate-project.sh
+
+      - name: Cache DerivedData
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Developer/Xcode/DerivedData
+          key: deriveddata-${{ runner.os }}-${{ hashFiles('project.yml', 'SayMoore.xcodeproj/**') }}
+          restore-keys: |
+            deriveddata-${{ runner.os }}-
+
+      # Code signing is intentionally disabled on CI — we only need to
+      # confirm the code compiles and tests pass. Release builds are
+      # produced locally by scripts/build-release.sh.
+      - name: Build
+        shell: bash
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project SayMoore.xcodeproj \
+            -scheme SayMoore \
+            -configuration Debug \
+            -destination 'platform=macOS' \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            build | xcbeautify
+
+      - name: Test
+        shell: bash
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project SayMoore.xcodeproj \
+            -scheme SayMoore \
+            -configuration Debug \
+            -destination 'platform=macOS' \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            test | xcbeautify

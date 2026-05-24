@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# Pre-push hook: build SayMoore Debug before allowing push.
+# Skips if pushing zero-byte refs (branch deletions) or if SKIP_PREPUSH=1.
+#
+# Install: ./scripts/install-hooks.sh
+
+set -euo pipefail
+
+if [[ "${SKIP_PREPUSH:-0}" == "1" ]]; then
+  echo "pre-push: SKIP_PREPUSH=1, skipping build"
+  exit 0
+fi
+
+# Read the list of refs being pushed from stdin. If they're all deletions
+# (new SHA = 0000...), there's nothing to build.
+all_deletions=1
+while read -r _local_ref _local_sha _remote_ref remote_sha; do
+  if [[ "$_local_sha" != "0000000000000000000000000000000000000000" ]]; then
+    all_deletions=0
+  fi
+done
+
+if [[ "$all_deletions" == "1" ]]; then
+  echo "pre-push: only deletions, skipping build"
+  exit 0
+fi
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+echo "pre-push: building SayMoore Debug (skip with SKIP_PREPUSH=1)…"
+if ! xcodebuild \
+      -project SayMoore.xcodeproj \
+      -scheme SayMoore \
+      -configuration Debug \
+      -destination 'platform=macOS' \
+      build -quiet >/tmp/saymoore-prepush.log 2>&1; then
+  echo "pre-push: build FAILED — push aborted. Log: /tmp/saymoore-prepush.log"
+  tail -40 /tmp/saymoore-prepush.log
+  exit 1
+fi
+
+echo "pre-push: build OK"
