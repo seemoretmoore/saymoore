@@ -32,6 +32,7 @@ final class SettingsWindow: NSObject {
         window.contentViewController = hosting
         window.title = "SayMoore Settings"
         window.isReleasedWhenClosed = false
+        window.collectionBehavior = [.canJoinAllSpaces, .moveToActiveSpace]
         window.center()
         super.init()
     }
@@ -39,9 +40,17 @@ final class SettingsWindow: NSObject {
     /// Pull fresh state from PresetStore before showing — covers the
     /// case where the user edited presets.json by hand between sessions.
     func show() {
-        viewModel.refresh()
+        // Re-center if the saved frame ended up offscreen (e.g. external
+        // display was disconnected since last open) — otherwise the window
+        // orders front onto a screen that doesn't exist anymore.
+        let onScreen = NSScreen.screens.contains { $0.visibleFrame.intersects(window.frame) }
+        if !onScreen { window.center() }
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
+        // Refresh AFTER activation — a refresh throw must never prevent the
+        // window from appearing.
+        viewModel.refresh()
+        Log.app.info("settings.show: visible=\(self.window.isVisible, privacy: .public) frame=\(NSStringFromRect(self.window.frame), privacy: .public) screen=\(self.window.screen?.localizedName ?? "nil", privacy: .public)")
     }
 
     /// Called by AppDelegate after a FSEvents-driven reload of presets.json.
