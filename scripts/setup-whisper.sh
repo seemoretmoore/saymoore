@@ -6,13 +6,17 @@
 # pins a tag, runs that build, and drops the resulting Vendor/whisper.xcframework into
 # the repo (gitignored — ~200 MB).
 #
+# Security: CVE-2025-14569 affects whisper.cpp through v1.8.2. Use v1.8.4, the
+# current stable release beyond that affected range, and verify its exact commit SHA.
+#
 # Usage:
 #   bash scripts/setup-whisper.sh                # idempotent: skips if version stamp matches
 #   bash scripts/setup-whisper.sh --force-rebuild
 
 set -euo pipefail
 
-WHISPER_TAG="v1.7.6"
+WHISPER_TAG="v1.8.4"
+WHISPER_SHA="9386f239401074690479731c1e41683fbbeac557"
 WHISPER_REPO="https://github.com/ggml-org/whisper.cpp"
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD_DIR="${ROOT_DIR}/build/whisper-build"
@@ -57,6 +61,14 @@ else
     echo "Reusing existing clone at $BUILD_DIR (run with --force-rebuild to wipe)."
     (cd "$BUILD_DIR" && git fetch --depth 1 origin tag "$WHISPER_TAG" >/dev/null 2>&1 || true)
     (cd "$BUILD_DIR" && git checkout "$WHISPER_TAG")
+fi
+
+ACTUAL_WHISPER_SHA="$(cd "$BUILD_DIR" && git rev-parse HEAD)"
+if [[ "$ACTUAL_WHISPER_SHA" != "$WHISPER_SHA" ]]; then
+    echo "✗ whisper.cpp checkout SHA mismatch for $WHISPER_TAG" >&2
+    echo "  expected: $WHISPER_SHA" >&2
+    echo "  actual:   $ACTUAL_WHISPER_SHA" >&2
+    exit 1
 fi
 
 if [[ ! -x "$BUILD_DIR/build-xcframework.sh" ]]; then
