@@ -161,6 +161,34 @@ bash scripts/build-release.sh         # or open SayMoore.xcodeproj in Xcode
 
 The signing script is idempotent — re-running it without `--force-regen` is a safe no-op. Using `--force-regen` rotates the identity, which revokes any Accessibility / Input-Monitoring permissions previously granted to SayMoore.
 
+## Signing & Notarization
+
+The `SayMoore Self-Sign` identity created by `scripts/setup-signing.sh` is for local development and dogfood builds only. It gives the app a stable local code signature for macOS permissions, but it does not produce a public release that Gatekeeper will trust automatically.
+
+Public release builds require an Apple Developer ID Application certificate and notarization:
+
+1. Create a Developer ID Application certificate in Xcode or the Apple Developer portal, install it in the build machine's login keychain, and export a backup copy for release builders.
+2. Set `CODE_SIGN_IDENTITY="Developer ID Application: <Name> (<TEAMID>)"` in `scripts/build-release.sh` before archiving a public release.
+3. Configure notarization credentials with a notarytool keychain profile, for example:
+
+   ```bash
+   xcrun notarytool store-credentials AC_NOTARIZE \
+     --apple-id "$APPLE_ID" \
+     --team-id "$APPLE_TEAM_ID" \
+     --password "<app-specific-password>"
+   ```
+
+4. After `bash scripts/build-release.sh` produces the release zip, submit and staple the exported app:
+
+   ```bash
+   xcrun notarytool submit release/<version>/SayMoore-<version>.zip \
+     --keychain-profile AC_NOTARIZE \
+     --wait
+   xcrun stapler staple build/export-<version>/SayMoore.app
+   ```
+
+Release builders need `APPLE_TEAM_ID`, `APPLE_ID`, and a notarytool keychain profile named `AC_NOTARIZE` (or the matching profile name used in the submit command). A future PR will wire these values into the automated release pipeline.
+
 ## License
 
 MIT — see [`LICENSE`](LICENSE).
