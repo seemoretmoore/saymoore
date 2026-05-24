@@ -171,17 +171,17 @@ final class PipelineCoordinatorCleanupTests: XCTestCase {
 
     func testSnippetExpandsBeforeCleanupSeesIt() async throws {
         let fake = FakeCleanup()
-        fake.nextResult = .success("Thanks — Tracy please review")
+        fake.nextResult = .success("Thanks — Alex please review")
         let (coord, state, cleanup, _, kb) = makeRig(
             transcript: Transcript(text: "thanks insert sig please review", averageNoSpeechProb: 0),
             cleanup: fake,
-            presets: makeStubPresets(snippets: ["sig": "— Tracy"])
+            presets: makeStubPresets(snippets: ["sig": "— Alex"])
         )
         coord.toggle(bundleID: "com.apple.TextEdit")
         coord.toggle(bundleID: nil)
         try await Task.sleep(for: .milliseconds(80))
         // The cleanup service must see the EXPANDED transcript, not the raw one.
-        XCTAssertEqual(cleanup.lastRaw, "thanks — Tracy please review",
+        XCTAssertEqual(cleanup.lastRaw, "thanks — Alex please review",
                        "snippets must expand before the LLM sees the transcript")
         XCTAssertEqual(kb.pastes, 1)
         XCTAssertEqual(state.state, .idle)
@@ -191,7 +191,7 @@ final class PipelineCoordinatorCleanupTests: XCTestCase {
         // 3-word raw → fast-path skips cleanup; snippet still expands.
         let (coord, _, cleanup, pb, kb) = makeRig(
             transcript: Transcript(text: "insert sig now", averageNoSpeechProb: 0),
-            presets: makeStubPresets(snippets: ["sig": "— Tracy"])
+            presets: makeStubPresets(snippets: ["sig": "— Alex"])
         )
         coord.toggle(bundleID: "com.apple.TextEdit")
         coord.toggle(bundleID: nil)
@@ -212,7 +212,7 @@ final class PipelineCoordinatorCleanupTests: XCTestCase {
         let (coord, _, cleanup, _, _) = makeRig(
             transcript: Transcript(text: "no snippet keyword present here", averageNoSpeechProb: 0),
             cleanup: fake,
-            presets: makeStubPresets(snippets: ["sig": "— Tracy"])
+            presets: makeStubPresets(snippets: ["sig": "— Alex"])
         )
         coord.toggle(bundleID: "com.apple.TextEdit")
         coord.toggle(bundleID: nil)

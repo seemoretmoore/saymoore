@@ -52,7 +52,7 @@ final class VocabSuggester {
     /// Extract proper-noun-like terms from `text`. Three patterns:
     ///   - PascalCase / mixed camelCase with at least one internal uppercase
     ///     run after lowercase (e.g. "FooBar", "AVAudioEngine"). Single-cap
-    ///     words like "Tracy" are NOT matched — too noisy.
+    ///     words like "Alex" are NOT matched — too noisy.
     ///   - SCREAMING_SNAKE_CASE with at least one underscore (e.g. "API_KEY").
     ///   - ALL-CAPS words ≥4 letters (e.g. "GRAPHQL"). 2- and 3-letter
     ///     all-caps are skipped — too many false positives ("OK", "USA").

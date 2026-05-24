@@ -17,13 +17,13 @@ Press **Esc** during recording to discard.
 
 ### Per-app presets
 
-The same dictation gets cleaned differently depending on which app is frontmost. Example phrase — *"hi tracy uh i think we should ship friday and also fix the api timeout"*:
+The same dictation gets cleaned differently depending on which app is frontmost. Example phrase — *"hi alex uh i think we should ship friday and also fix the api timeout"*:
 
 | Frontmost app | Cleaned output |
 |---|---|
-| Slack | `hi tracy, i think we should ship friday and also fix the api timeout` |
-| Notes (or anything without an override) | `Hi Tracy, I think we should ship on Friday and also fix the API timeout.` |
-| Messages | `hi tracy, i think we should ship on friday and also fix the api timeout` |
+| Slack | `hi alex, i think we should ship friday and also fix the api timeout` |
+| Notes (or anything without an override) | `Hi Alex, I think we should ship on Friday and also fix the API timeout.` |
+| Messages | `hi alex, i think we should ship on friday and also fix the api timeout` |
 | BBEdit (code/notes editor) | `Fix getUserRequest and update JSON schema before calling API endpoint` *(on a different, technical phrase — preserves identifiers, drops articles)* |
 
 Bundled overrides ship for Slack, Notes, Messages, and BBEdit. Edit `~/Library/Application Support/SayMoore/presets.json` to add your own — changes hot-reload without restart. A "Reload Presets" menu item also triggers a manual reload.
@@ -101,7 +101,7 @@ This repo is being built one vertical slice at a time. Track progress in the [Gi
 ## Requirements
 
 - macOS 14 (Sonoma) or later
-- M-series Apple Silicon recommended; tested on M2 Ultra
+- M-series Apple Silicon recommended
 - [Ollama](https://ollama.com) installed locally with `qwen2.5:7b-instruct` pulled
 - ~6 GB free RAM while running (1.5 GB Whisper + 4.5 GB Qwen)
 - ~6 GB free disk for models

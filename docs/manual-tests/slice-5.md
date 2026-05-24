@@ -2,7 +2,7 @@
 
 Goal: verify dictation auto-stops on 10s of silence, that an 80s warning fires "10 seconds remaining", that 90s force-stops with a notification, and that Esc still cancels at any point during recording.
 
-Signed off **2026-05-19** by Tracy on macOS 15 (darwin 25.3.0).
+Signed off **2026-05-19** on macOS 15 (darwin 25.3.0).
 
 > PRD reference: `docs/PRD.md` Slice 5 lines 365–381. All A/B/C/D scenarios passed in a single manual smoke pass against the freshly-installed Debug build at `~/Applications/SayMoore.app`.
 

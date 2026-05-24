@@ -145,7 +145,7 @@ final class SettingsViewModelTests: XCTestCase {
         {"$schemaVersion":1,
          "default":"D{{transcript}}",
          "overrides":{"com.x.y":"OVERRIDE {{transcript}}"},
-         "snippets":{"sig":"— Tracy"},
+         "snippets":{"sig":"— Alex"},
          "vocabulary":[{"phonetic":"old","canonical":"OLD"}]}
         """#
         let store = try makeStore(initial: json)
@@ -158,7 +158,7 @@ final class SettingsViewModelTests: XCTestCase {
         let overrides = obj?["overrides"] as? [String: Any]
         XCTAssertEqual(overrides?["com.x.y"] as? String, "OVERRIDE {{transcript}}")
         let snippets = obj?["snippets"] as? [String: Any]
-        XCTAssertEqual(snippets?["sig"] as? String, "— Tracy")
+        XCTAssertEqual(snippets?["sig"] as? String, "— Alex")
         let vocab = obj?["vocabulary"] as? [[String: String]]
         XCTAssertEqual(vocab?.count, 1)
         XCTAssertEqual(vocab?.first?["phonetic"], "new")
