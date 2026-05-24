@@ -25,7 +25,21 @@ jobs:
         run: xcodebuild -version
 
       - name: Install tools
-        run: brew install xcodegen xcbeautify
+        run: brew install xcodegen xcbeautify cmake
+
+      # The xcframework is 200MB and gitignored. Cache by the setup-whisper
+      # script contents (which pin tag + SHA) so a cold cache is the only
+      # time we pay the ~5min build.
+      - name: Cache whisper.xcframework
+        id: cache-whisper
+        uses: actions/cache@v4
+        with:
+          path: Vendor/whisper.xcframework
+          key: whisper-${{ runner.os }}-${{ hashFiles('scripts/setup-whisper.sh') }}
+
+      - name: Build whisper.xcframework (cold cache only)
+        if: steps.cache-whisper.outputs.cache-hit != 'true'
+        run: bash scripts/setup-whisper.sh
 
       - name: Generate Xcode project
         run: ./scripts/generate-project.sh
