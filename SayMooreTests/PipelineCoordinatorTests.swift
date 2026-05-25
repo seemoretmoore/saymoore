@@ -642,6 +642,9 @@ private final class BlockingTranscriptionService: TranscriptionService {
             }
         }
     }
+    nonisolated func transcribeTimed(samples: [Float], sampleRate: Int) async throws -> TimedTranscript {
+        return TimedTranscript(segments: [])
+    }
     func resume(_ result: Result<Transcript, Error>) {
         if let c = continuation {
             continuation = nil

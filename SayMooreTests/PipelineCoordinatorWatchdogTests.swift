@@ -43,6 +43,10 @@ final class PipelineCoordinatorWatchdogTests: XCTestCase {
             try await Task.sleep(nanoseconds: 10_000_000_000) // 10s
             return Transcript(text: "never", averageNoSpeechProb: 0)
         }
+        func transcribeTimed(samples: [Float], sampleRate: Int) async throws -> TimedTranscript {
+            try await Task.sleep(nanoseconds: 10_000_000_000)
+            return TimedTranscript(segments: [])
+        }
     }
 
     /// The watchdog must NOT fire during recording — recording length is
