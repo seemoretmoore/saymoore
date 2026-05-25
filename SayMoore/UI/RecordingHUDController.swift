@@ -10,6 +10,13 @@ final class RecordingHUDController {
     static let fadeOutDuration: TimeInterval = 0.12
 
     private static let pillSize = NSSize(width: 130, height: 30)
+    private static let collapsedWidth: CGFloat = 130
+    private static let maxExpandedWidth: CGFloat = 480
+    private static let dividerWidth: CGFloat = 1
+    private static let dividerLeftMargin: CGFloat = 6
+    private static let dividerRightMargin: CGFloat = 8
+    private static let textRightMargin: CGFloat = 12
+    private static let textFontSize: CGFloat = 11
     private static let barCount = 12
     private static let barWidth: CGFloat = 4
     private static let barGap: CGFloat = 4
@@ -30,6 +37,10 @@ final class RecordingHUDController {
     private var displayBuffer: [Float] = Array(repeating: 0, count: barCount)
     private var dotPulseTimer: Timer?
     private var dotDim: Bool = false
+    private var textField: NSTextField!
+    private var dividerLayer: CALayer!
+    private var lastCommitted: String = ""
+    private var lastActive: String = ""
     nonisolated(unsafe) private var appActivationObserver: NSObjectProtocol?
 
     /// Exposed for unit tests — current smoothed bar amplitudes (0...1).
@@ -103,6 +114,40 @@ final class RecordingHUDController {
             barLayers.append(layer)
         }
 
+        let divider = CALayer()
+        divider.backgroundColor = NSColor.white.withAlphaComponent(0.15).cgColor
+        let dividerX = Self.barAreaX + CGFloat(Self.barCount) * (Self.barWidth + Self.barGap) + Self.dividerLeftMargin
+        divider.frame = NSRect(
+            x: dividerX,
+            y: (size.height - Self.barMaxHeight) / 2,
+            width: Self.dividerWidth,
+            height: Self.barMaxHeight
+        )
+        divider.opacity = 0
+        background.layer?.addSublayer(divider)
+        self.dividerLayer = divider
+
+        let tf = NSTextField(labelWithString: "")
+        tf.font = NSFont.systemFont(ofSize: Self.textFontSize, weight: .regular)
+        tf.textColor = NSColor.white
+        tf.backgroundColor = .clear
+        tf.isBezeled = false
+        tf.isEditable = false
+        tf.isSelectable = false
+        tf.lineBreakMode = .byTruncatingHead
+        tf.usesSingleLineMode = true
+        tf.cell?.truncatesLastVisibleLine = true
+        tf.alphaValue = 0
+        let textX = dividerX + Self.dividerWidth + Self.dividerRightMargin
+        tf.frame = NSRect(
+            x: textX,
+            y: 0,
+            width: 0,
+            height: size.height
+        )
+        background.addSubview(tf)
+        self.textField = tf
+
         panel.contentView = background
         panel.alphaValue = 0
     }
@@ -124,6 +169,15 @@ final class RecordingHUDController {
         stopAppFollowing()
         stopDotPulse()
         resetBars()
+        lastCommitted = ""
+        lastActive = ""
+        textField.attributedStringValue = NSAttributedString(string: "")
+        textField.alphaValue = 0
+        dividerLayer.opacity = 0
+        // Snap pill back to collapsed width for next show().
+        var f = panel.frame
+        f.size.width = Self.collapsedWidth
+        panel.setFrame(f, display: false)
         NSAnimationContext.runAnimationGroup({ ctx in
             ctx.duration = Self.fadeOutDuration
             panel.animator().alphaValue = 0
@@ -149,6 +203,64 @@ final class RecordingHUDController {
             barLayers[i].frame = NSRect(x: x, y: y, width: Self.barWidth, height: h)
         }
         CATransaction.commit()
+    }
+
+    /// Update the partial-transcript display. Animates the pill width to fit.
+    /// Empty strings collapse the pill back to waveform-only.
+    func updatePartialText(committed: String, active: String) {
+        lastCommitted = committed
+        lastActive = active
+
+        let combined = committed + active
+        if combined.isEmpty {
+            animatePillWidth(to: Self.collapsedWidth)
+            dividerLayer.opacity = 0
+            textField.alphaValue = 0
+            textField.attributedStringValue = NSAttributedString(string: "")
+            return
+        }
+
+        let attr = NSMutableAttributedString()
+        let baseFont = NSFont.systemFont(ofSize: Self.textFontSize, weight: .regular)
+        let baseAttrs: [NSAttributedString.Key: Any] = [
+            .font: baseFont,
+            .foregroundColor: NSColor.white,
+        ]
+        attr.append(NSAttributedString(string: committed, attributes: baseAttrs))
+        let italicFont = Self.italicFont(baseFont)
+        let activeAttrs: [NSAttributedString.Key: Any] = [
+            .font: italicFont,
+            .foregroundColor: NSColor.white.withAlphaComponent(0.85),
+        ]
+        attr.append(NSAttributedString(string: active, attributes: activeAttrs))
+        textField.attributedStringValue = attr
+        textField.alphaValue = 1
+        dividerLayer.opacity = 1
+
+        // Measure + clamp.
+        let measured = attr.size().width + 4  // text padding fudge
+        let dividerX = Self.barAreaX + CGFloat(Self.barCount) * (Self.barWidth + Self.barGap) + Self.dividerLeftMargin
+        let textStartX = dividerX + Self.dividerWidth + Self.dividerRightMargin
+        let target = min(Self.maxExpandedWidth, textStartX + measured + Self.textRightMargin)
+        animatePillWidth(to: target)
+        textField.frame.size.width = target - textStartX - Self.textRightMargin
+    }
+
+    private func animatePillWidth(to newWidth: CGFloat) {
+        var f = panel.frame
+        let delta = newWidth - f.width
+        f.origin.x -= delta / 2
+        f.size.width = newWidth
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0.18
+            ctx.allowsImplicitAnimation = true
+            panel.animator().setFrame(f, display: false)
+        }
+    }
+
+    private static func italicFont(_ base: NSFont) -> NSFont {
+        let desc = base.fontDescriptor.withSymbolicTraits(.italic)
+        return NSFont(descriptor: desc, size: base.pointSize) ?? base
     }
 
     private func resetBars() {
