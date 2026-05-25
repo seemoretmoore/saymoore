@@ -585,8 +585,16 @@ After all slices ship:
 - Optional 24h audio retention for re-transcribe-on-correction
 - In-app searchable history viewer (v1 ships "Open Debug Log in Finder")
 
-**Explicitly not v1:**
-- Streaming transcription
+**Shipped in v1.2:**
+- Streaming partial transcript display — live whisper output in the
+  Lifestream HUD pill as the user speaks. Sliding-window inference
+  matching whisper.cpp's `stream` example pattern. Off / Balanced /
+  Responsive setting in Settings ▸ General; default = Balanced. Final
+  paste on hotkey release remains the authoritative event; partials are
+  advisory display only. Spec:
+  `docs/superpowers/specs/2026-05-24-streaming-partials-design.md`
+
+**Explicitly not v1 (still not in any version):**
 - Multi-user support
 - iCloud sync
 - Custom voice activation (other than Ctrl-Ctrl)
