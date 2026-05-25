@@ -31,6 +31,13 @@ final class AudioRecorder {
     /// AppDelegate hops to MainActor before touching CALayer.
     var onLevelUpdate: (@Sendable (Float) -> Void)?
 
+    /// Fired from the audio thread for every converted PCM chunk with the
+    /// raw 16 kHz mono float samples. Handler is responsible for its own
+    /// threading; the StreamingTranscriber subscribes here to feed its
+    /// sliding-window buffer without disturbing the ring buffer that the
+    /// final `stop() -> [Float]` drain relies on.
+    var onSamples: (@Sendable ([Float]) -> Void)?
+
     /// Fired (on the main actor) when AVAudioEngine posts a
     /// configurationChangeNotification while we're mid-recording. The recorder
     /// has already stopped itself by the time this fires — the handler is
@@ -69,6 +76,7 @@ final class AudioRecorder {
         let ring = self.ringBuffer
         let vad = self.vadService
         let levelHandler = self.onLevelUpdate
+        let samplesHandler = self.onSamples
         input.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { [weak self] buffer, _ in
             do {
                 let converted = try conv.convert(buffer)
@@ -76,6 +84,9 @@ final class AudioRecorder {
                 let frames = Int(converted.frameLength)
                 let bp = UnsafeBufferPointer(start: ch, count: frames)
                 _ = ring.write(bp)
+                if let samplesHandler {
+                    samplesHandler(Array(bp))
+                }
                 // Forward to VAD if attached. One small heap alloc per ~22ms
                 // tap (typical chunk ~341 samples post-convert at 16kHz).
                 // Acceptable for dictation — not hard-real-time audio.
