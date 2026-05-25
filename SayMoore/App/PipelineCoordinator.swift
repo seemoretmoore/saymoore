@@ -40,6 +40,9 @@ final class PipelineCoordinator {
     private let lengthCapHardStop: TimeInterval
     private let watchdogTimeout: TimeInterval
     private let commandModeWindow: TimeInterval
+    private let streamingModeProvider: @MainActor @Sendable () -> StreamingMode
+    private let hudPartialSink: (@MainActor (String, String) -> Void)?
+    private var streamingTranscriber: StreamingTranscriber?
 
     private var capturedBundleID: String?
     /// Set when a recording is interpreted as a Command Mode edit (rewrite the
@@ -99,6 +102,8 @@ final class PipelineCoordinator {
         lengthCapHardStop: TimeInterval = PipelineCoordinator.defaultLengthCapHardStop,
         watchdogTimeout: TimeInterval = 30,
         commandModeWindow: TimeInterval = PipelineCoordinator.defaultCommandModeWindow,
+        streamingModeProvider: @escaping @MainActor @Sendable () -> StreamingMode = { .off },
+        hudPartialSink: (@MainActor (String, String) -> Void)? = nil,
         onFallback: (@MainActor (SayMooreError) -> Void)? = nil
     ) {
         self.appState = appState
@@ -117,6 +122,8 @@ final class PipelineCoordinator {
         self.lengthCapHardStop = lengthCapHardStop
         self.watchdogTimeout = watchdogTimeout
         self.commandModeWindow = commandModeWindow
+        self.streamingModeProvider = streamingModeProvider
+        self.hudPartialSink = hudPartialSink
         self.onFallback = onFallback
         wireVADIfNeeded()
     }
@@ -137,6 +144,8 @@ final class PipelineCoordinator {
         lengthCapHardStop: TimeInterval = PipelineCoordinator.defaultLengthCapHardStop,
         watchdogTimeout: TimeInterval = 30,
         commandModeWindow: TimeInterval = PipelineCoordinator.defaultCommandModeWindow,
+        streamingModeProvider: @escaping @MainActor @Sendable () -> StreamingMode = { .off },
+        hudPartialSink: (@MainActor (String, String) -> Void)? = nil,
         onFallback: (@MainActor (SayMooreError) -> Void)? = nil
     ) {
         self.appState = appState
@@ -154,6 +163,8 @@ final class PipelineCoordinator {
         self.lengthCapHardStop = lengthCapHardStop
         self.watchdogTimeout = watchdogTimeout
         self.commandModeWindow = commandModeWindow
+        self.streamingModeProvider = streamingModeProvider
+        self.hudPartialSink = hudPartialSink
         self.onFallback = onFallback
         wireVADIfNeeded()
     }
@@ -201,7 +212,10 @@ final class PipelineCoordinator {
             }
             armWatchdog()
             appState.transition(to: .transcribing)
-            processingTask = Task { await self.processSamples(samples) }
+            processingTask = Task {
+                await self.stopStreaming()
+                await self.processSamples(samples)
+            }
         default:
             Log.pipeline.debug("Toggle ignored in state \(String(describing: self.appState.state), privacy: .public)")
             onBusyHotkey?()
@@ -216,6 +230,7 @@ final class PipelineCoordinator {
         Log.pipeline.error("audio device changed mid-recording")
         cancelLengthCapTimers()
         cancelWatchdog()
+        Task { await stopStreaming() }
         capturedBundleID = nil
         let err = SayMooreError.audioEngineFailed(underlying: AudioRecorder.RecorderError.deviceChanged)
         onFallback?(err)
@@ -226,6 +241,7 @@ final class PipelineCoordinator {
     func cancel() {
         guard appState.state == .recording else { return }
         recorder.cancel()
+        Task { await stopStreaming() }
         cancelLengthCapTimers()
         cancelWatchdog()
         capturedBundleID = nil
@@ -265,10 +281,37 @@ final class PipelineCoordinator {
         lastPasteBundleID = nil
     }
 
+    // MARK: - Streaming partials (v1.2)
+
+    private func startStreamingIfEnabled() {
+        let mode = streamingModeProvider()
+        guard mode != .off else { return }
+        let s = StreamingTranscriber(transcription: transcription, mode: mode)
+        let sink = hudPartialSink
+        s.onPartialUpdate = { committed, active in
+            sink?(committed, active)
+        }
+        recorder.onSamples = { samples in
+            s.appendSamples(samples)
+        }
+        s.start()
+        streamingTranscriber = s
+        Log.pipeline.info("streaming partials enabled (mode=\(mode.rawValue, privacy: .public))")
+    }
+
+    private func stopStreaming() async {
+        if let s = streamingTranscriber {
+            await s.stop()
+            streamingTranscriber = nil
+            recorder.onSamples = nil
+        }
+    }
+
     private func beginRecording(bundleID: String?) {
         capturedBundleID = bundleID
         do {
             try recorder.start()
+            startStreamingIfEnabled()
             appState.transition(to: .recording)
             // Recording length is gated by the length-cap timers (60/80/90s).
             // The watchdog covers only the post-recording pipeline phases
@@ -306,6 +349,7 @@ final class PipelineCoordinator {
         // reset, and the next stop() drains session N-1 + silence + session N
         // (whisper hallucinates tech-bro words on the silence gap).
         recorder.cancel()
+        Task { await stopStreaming() }
         capturedBundleID = nil
         captureIsCommandMode = false
         processingTask?.cancel()
@@ -335,7 +379,10 @@ final class PipelineCoordinator {
         }
         armWatchdog()
         appState.transition(to: .transcribing)
-        processingTask = Task { await self.processSamples(samples) }
+        processingTask = Task {
+            await self.stopStreaming()
+            await self.processSamples(samples)
+        }
     }
 
     // MARK: - Length cap (80s warning / 90s hard stop)
@@ -405,7 +452,10 @@ final class PipelineCoordinator {
         onFallback?(.recordingTooLong)
         armWatchdog()
         appState.transition(to: .transcribing)
-        processingTask = Task { await self.processSamples(samples) }
+        processingTask = Task {
+            await self.stopStreaming()
+            await self.processSamples(samples)
+        }
     }
 
     private func processSamples(_ samples: [Float]) async {

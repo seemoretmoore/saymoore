@@ -7,6 +7,7 @@ final class PipelineCoordinatorTests: XCTestCase {
     private final class FakeRecorder: AudioRecording {
         var isRecording: Bool = false
         var vadService: VADService?
+        var onSamples: (@Sendable ([Float]) -> Void)?
         var samples: [Float] = Array(repeating: 0.5, count: 16_000)
         var startError: Error?
         var stopError: Error?

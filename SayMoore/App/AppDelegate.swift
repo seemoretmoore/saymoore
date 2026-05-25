@@ -436,6 +436,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             recordingsDir: Self.recordingsDirIfPossible(),
             vadService: vadService,
             historyStore: historyStore,
+            streamingModeProvider: { @MainActor in
+                let raw = UserDefaults.standard.string(forKey: StreamingMode.userDefaultsKey)
+                return raw.flatMap(StreamingMode.init(rawValue:)) ?? .default
+            },
+            hudPartialSink: { [weak self] committed, active in
+                self?.hud.updatePartialText(committed: committed, active: active)
+            },
             onFallback: { error in NotificationCoordinator.shared.notify(error) }
         )
         // C1: stamp blocked flag immediately so probe results that landed before
