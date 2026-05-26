@@ -26,16 +26,24 @@
 
 ## CPU calibration — Balanced mode (REQUIRED before ship)
 
-**Setup:** Activity Monitor open, filtered to `SayMoore`. macOS 14.x+, M2
-Ultra Mac Studio.
+**Setup:** Activity Monitor open. macOS 14.x+, M2 Ultra Mac Studio.
+- **Tab:** *CPU* (not Energy, Memory, Disk, or Network).
+- **Filter:** type "SayMoore" in the search field (top right) so only the
+  app's row is visible.
+- **Column to watch:** **% CPU**. On Apple Silicon a single full core ≈ 100 %,
+  so the 30 % threshold means "≤ 30 in the % CPU column" — *not* 30 % of
+  total system CPU. (Activity Monitor reports per-process % normalized to
+  one core, not to the entire chip.)
 
 **Procedure:**
 1. Settings ▸ Streaming partials = Balanced.
 2. Three back-to-back 60 s dictations in TextEdit. Read aloud from a book.
-3. Note peak + sustained CPU % during recording (NOT post-recording cleanup).
+3. Note **peak** (highest momentary value while talking) and **sustained**
+   (the value the row settles at while dictation is actively running, *not*
+   the brief spike during the final cleanup pass after you release the hotkey).
 
-**Acceptance:** sustained CPU during recording ≤ 30 % of one core (Activity
-Monitor reports per-process %; on Apple Silicon a single full core ≈ 100 %).
+**Acceptance:** sustained % CPU during recording ≤ 30 (≈ one-third of a single
+core on Apple Silicon).
 
 **Run YYYY-MM-DD:**
 - Trial 1: peak __ %, sustained __ %.
