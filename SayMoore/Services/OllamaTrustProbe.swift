@@ -99,7 +99,15 @@ actor OllamaTrustProbe {
 
     // MARK: - Private
 
-    static let ollamaTeamIdentifier = "FX44YY62GV"
+    /// Team IDs we accept for the Ollama binary. Ollama's signing identity
+    /// changed when the project restructured under "Infra Technologies, Inc"
+    /// — both certificates are legitimate, Apple-issued, and notarized:
+    ///   - `FX44YY62GV` — original "Ollama, Inc." Developer ID
+    ///   - `3MU9H2V9Y9` — current "Infra Technologies, Inc" Developer ID
+    /// A new entry here is a security decision: never add a Team ID without
+    /// independently verifying the certificate chain on a fresh download
+    /// from ollama.com.
+    static let ollamaTeamIdentifiers: Set<String> = ["FX44YY62GV", "3MU9H2V9Y9"]
 
     /// M4: HTTP check is liveness only. Returns `.failure` on network error so the
     /// caller can distinguish "no listener" from "bad binary".
@@ -215,10 +223,10 @@ actor OllamaTrustProbe {
         guard let teamIdentifier = details.teamIdentifier else {
             return .failure(OllamaTrustProbeError.missingTeamIdentifier(path: path, authorities: details.authorities))
         }
-        guard teamIdentifier == Self.ollamaTeamIdentifier else {
+        guard Self.ollamaTeamIdentifiers.contains(teamIdentifier) else {
             return .failure(OllamaTrustProbeError.unexpectedTeamIdentifier(
                 path: path,
-                expected: Self.ollamaTeamIdentifier,
+                expected: Self.ollamaTeamIdentifiers.sorted().joined(separator: ", "),
                 actual: teamIdentifier,
                 authorities: details.authorities
             ))

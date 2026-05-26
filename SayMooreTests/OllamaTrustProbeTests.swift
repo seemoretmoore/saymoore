@@ -390,6 +390,37 @@ final class OllamaTrustProbeTests: XCTestCase {
         XCTAssertTrue(String(describing: error).contains("unexpected TeamIdentifier"))
     }
 
+    /// Regression: Ollama restructured under "Infra Technologies, Inc" and
+    /// now signs with TeamIdentifier 3MU9H2V9Y9. The probe must accept this
+    /// alongside the legacy Ollama, Inc. (FX44YY62GV) signature. Otherwise
+    /// every user on a current Ollama install gets blocked by the trust
+    /// probe and dictation is paused indefinitely.
+    func testInfraTechnologiesTeamIdentifierIsAccepted() async throws {
+        let data = try XCTUnwrap(#"{"version":"0.6.0"}"#.data(using: .utf8))
+        let session = makeSession(responding: data)
+        let codesign = CodesignStub(
+            describe: .init(
+                exitCode: 0,
+                output: """
+                TeamIdentifier=3MU9H2V9Y9
+                Authority=Developer ID Application: Infra Technologies, Inc (3MU9H2V9Y9)
+                Authority=Developer ID Certification Authority
+                Authority=Apple Root CA
+                """
+            )
+        )
+        let probe = trustedProbe(
+            session: session,
+            lsof: ollamaLsof(pid: 9),
+            binaryPathResolver: { _ in "/Applications/Ollama.app/Contents/Resources/ollama" },
+            codesignStub: codesign
+        )
+        let result = await probe.probe()
+        guard case .trusted = result else {
+            return XCTFail("expected .trusted for Infra Technologies, Inc signature, got \(result)")
+        }
+    }
+
     func testCodesignVerificationIsCachedByPathMtimeAndSize() async throws {
         let data = try XCTUnwrap(#"{"version":"0.1.32"}"#.data(using: .utf8))
         let session = makeSession(responding: data)
