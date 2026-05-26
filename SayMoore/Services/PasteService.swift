@@ -16,7 +16,12 @@ protocol KeyboardAdapter: Sendable {
     /// Post Cmd-Z (undo). Used by Command Mode to undo the prior paste before
     /// pasting the rewritten text. Treats paste-as-one-undo-unit (true in most
     /// macOS apps: Notes, Messages, Slack, BBEdit, TextEdit, Safari forms).
-    func postCmdZ()
+    ///
+    /// Returns `true` if Cmd-Z was actually posted, `false` if the adapter
+    /// aborted (e.g. a modifier key the hotkey driver hasn't released would
+    /// turn Cmd-Z into Ctrl-Cmd-Z and the undo would silently no-op). Callers
+    /// MUST NOT proceed with the dependent paste when `false` is returned.
+    func postCmdZ() -> Bool
 }
 
 protocol FrontmostAdapter: Sendable {
@@ -98,7 +103,14 @@ final class PasteService: Sendable {
             throw SayMooreError.pasteFocusChanged(captured: capturedBundleID, current: current)
         }
 
-        keyboard.postCmdZ()
+        guard keyboard.postCmdZ() else {
+            // Modifier flag (typically Ctrl from the Ctrl-Ctrl hotkey) is still
+            // depressed at the kernel level; Cmd-Z would have arrived as
+            // Ctrl-Cmd-Z and silently no-op'd, leaving the prior paste in
+            // place. Abort *before* pasting the rewrite — otherwise the user
+            // sees original + rewrite both in the document.
+            throw SayMooreError.commandRewriteFailed(reason: "undo-blocked-modifier-stuck")
+        }
         try? await Task.sleep(for: .milliseconds(80))
 
         // Re-check focus after the undo lands — Cmd-Z can pop a confirmation
@@ -142,17 +154,31 @@ struct CGEventKeyboardAdapter: KeyboardAdapter {
         postCmdKey(virtualKey: 0x09) // 'v'
     }
 
-    func postCmdZ() {
-        // H2 diagnosis: log live modifier state at the instant we post Cmd-Z.
-        // If .maskControl is set, the Ctrl-Ctrl hotkey left a stuck flag and
-        // Cmd-Z is actually being delivered as Ctrl-Cmd-Z (no-op).
+    func postCmdZ() -> Bool {
+        // The Ctrl-Ctrl activation hotkey occasionally leaves .maskControl set
+        // in the session-level flags state after firing — measured up to ~80 ms
+        // on M2 Ultra under Command Mode load. If we post Cmd-Z while Ctrl is
+        // still held, the synthesized event arrives as Ctrl-Cmd-Z which is a
+        // no-op in nearly every app. Wait briefly for the flag to drop;
+        // bail out if it doesn't, so the caller knows not to paste the
+        // dependent rewrite on top of an un-undone original.
+        let waitDeadline = Date().addingTimeInterval(0.150)
+        while Date() < waitDeadline,
+              CGEventSource.flagsState(.combinedSessionState).contains(.maskControl) {
+            Thread.sleep(forTimeInterval: 0.005)
+        }
         let flags = CGEventSource.flagsState(.combinedSessionState)
         let ctrl = flags.contains(.maskControl) ? "CTRL " : ""
         let opt  = flags.contains(.maskAlternate) ? "OPT " : ""
         let cmd  = flags.contains(.maskCommand) ? "CMD " : ""
         let shft = flags.contains(.maskShift) ? "SHIFT " : ""
         Log.paste.info("postCmdZ flagsState=[\(ctrl, privacy: .public)\(opt, privacy: .public)\(cmd, privacy: .public)\(shft, privacy: .public)] raw=\(flags.rawValue, privacy: .public)")
+        if flags.contains(.maskControl) {
+            Log.paste.error("postCmdZ aborted — Ctrl flag still set after 150ms wait; refusing to post Ctrl-Cmd-Z")
+            return false
+        }
         postCmdKey(virtualKey: 0x06) // 'z'
+        return true
     }
 
     private func postCmdKey(virtualKey: CGKeyCode) {

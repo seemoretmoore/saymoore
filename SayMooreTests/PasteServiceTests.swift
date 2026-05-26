@@ -21,10 +21,15 @@ final class PasteServiceTests: XCTestCase {
     private final class FakeKeyboard: KeyboardAdapter, @unchecked Sendable {
         var pastes = 0
         var undos = 0
+        var cmdZShouldSucceed = true
         var onPostCmdV: (() -> Void)?
         var onPostCmdZ: (() -> Void)?
         func postCmdV() { pastes += 1; onPostCmdV?() }
-        func postCmdZ() { undos += 1; onPostCmdZ?() }
+        func postCmdZ() -> Bool {
+            undos += 1
+            onPostCmdZ?()
+            return cmdZShouldSucceed
+        }
     }
 
     private final class FakeFrontmost: FrontmostAdapter, @unchecked Sendable {
@@ -231,5 +236,39 @@ final class PasteServiceTests: XCTestCase {
         //   3. clear (before restore)
         //   4. set:old  (restore)
         XCTAssertEqual(pb.ops, ["clear", "set:hello", "clear", "set:old"])
+    }
+
+    // MARK: - replacePriorPaste — Cmd-Z stuck-modifier abort
+
+    /// Regression: when the keyboard adapter returns false from postCmdZ
+    /// (modifier flag still depressed — e.g. Ctrl from the Ctrl-Ctrl hotkey
+    /// hasn't released yet), replacePriorPaste MUST throw commandRewriteFailed
+    /// BEFORE writing or pasting the rewrite. Otherwise the un-undone original
+    /// + the rewrite both land in the document = "double output" the user
+    /// reported during v1.2 dogfood.
+    func testReplacePriorPasteAbortsWhenCmdZRefusesDueToStuckModifier() async {
+        let pb = FakePasteboard()
+        pb.current = "user-clipboard"
+        let kb = FakeKeyboard()
+        kb.cmdZShouldSucceed = false   // simulate stuck Ctrl flag
+        let fm = FakeFrontmost(); fm.bundleID = "com.apple.TextEdit"
+
+        let svc = PasteService(
+            pasteboard: pb, keyboard: kb, frontmost: fm,
+            restoreDelay: .zero
+        )
+        do {
+            try await svc.replacePriorPaste(rewritten: "rewritten text",
+                                            capturedBundleID: "com.apple.TextEdit")
+            XCTFail("expected commandRewriteFailed when postCmdZ returns false")
+        } catch SayMooreError.commandRewriteFailed(let reason) {
+            XCTAssertEqual(reason, "undo-blocked-modifier-stuck")
+            XCTAssertEqual(kb.undos, 1, "postCmdZ should still have been called once")
+            XCTAssertEqual(kb.pastes, 0, "MUST NOT post Cmd-V after a refused undo")
+            XCTAssertEqual(pb.current, "user-clipboard",
+                           "user's clipboard must be restored after the throw")
+        } catch {
+            XCTFail("wrong error: \(error)")
+        }
     }
 }

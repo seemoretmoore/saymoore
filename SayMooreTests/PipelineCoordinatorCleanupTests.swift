@@ -24,7 +24,7 @@ final class PipelineCoordinatorCleanupTests: XCTestCase {
         var pastes = 0
         var undos = 0
         func postCmdV() { pastes += 1 }
-        func postCmdZ() { undos += 1 }
+        func postCmdZ() -> Bool { undos += 1; return true }
     }
     private final class FakeFrontmost: FrontmostAdapter, @unchecked Sendable {
         var bundleID: String?

@@ -26,7 +26,7 @@ final class PipelineCoordinatorStreamingOffTests: XCTestCase {
     }
     private final class FakeKeyboard: KeyboardAdapter, @unchecked Sendable {
         func postCmdV() {}
-        func postCmdZ() {}
+        func postCmdZ() -> Bool { true }
     }
     private final class FakeFrontmost: FrontmostAdapter, @unchecked Sendable {
         var bundleID: String?
