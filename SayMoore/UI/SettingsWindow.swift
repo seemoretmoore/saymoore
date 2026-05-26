@@ -32,7 +32,13 @@ final class SettingsWindow: NSObject {
         window.contentViewController = hosting
         window.title = "SayMoore Settings"
         window.isReleasedWhenClosed = false
-        window.collectionBehavior = [.canJoinAllSpaces, .moveToActiveSpace]
+        // `.canJoinAllSpaces` (utility-style follow-the-user) conflicts with
+        // `.moveToActiveSpace` (jump-here-now) and on macOS 14+ causes
+        // makeKeyAndOrderFront to land the window on an inactive Space —
+        // visible=true in logs, but invisible to the user. Drop the
+        // follow-style flag; add fullScreenAuxiliary so the window layers
+        // over a fullscreen app instead of switching Spaces.
+        window.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
         window.center()
         super.init()
     }
