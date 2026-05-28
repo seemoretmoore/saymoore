@@ -72,3 +72,6 @@ release/
 *.log
 *.bak
 *.tmp
+
+# Local Claude Code state (per-machine, never share)
+.claude/
