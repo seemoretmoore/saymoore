@@ -283,9 +283,14 @@ final class PipelineCoordinator {
 
     // MARK: - Streaming partials (v1.2)
 
-    private func startStreamingIfEnabled() {
+    /// Wire `recorder.onSamples` to a fresh StreamingTranscriber. MUST be
+    /// called BEFORE `recorder.start()` — the recorder snapshots `onSamples`
+    /// into a local at tap-install time, so any assignment after start() is
+    /// invisible to the audio thread. Returns the transcriber so the caller
+    /// can `start()` its tick loop once `recorder.start()` has succeeded.
+    private func setupStreamingIfEnabled() -> StreamingTranscriber? {
         let mode = streamingModeProvider()
-        guard mode != .off else { return }
+        guard mode != .off else { return nil }
         let s = StreamingTranscriber(transcription: transcription, mode: mode)
         let sink = hudPartialSink
         s.onPartialUpdate = { committed, active in
@@ -294,9 +299,9 @@ final class PipelineCoordinator {
         recorder.onSamples = { samples in
             s.appendSamples(samples)
         }
-        s.start()
         streamingTranscriber = s
         Log.pipeline.info("streaming partials enabled (mode=\(mode.rawValue, privacy: .public))")
+        return s
     }
 
     private func stopStreaming() async {
@@ -310,8 +315,9 @@ final class PipelineCoordinator {
     private func beginRecording(bundleID: String?) {
         capturedBundleID = bundleID
         do {
+            let streaming = setupStreamingIfEnabled()
             try recorder.start()
-            startStreamingIfEnabled()
+            streaming?.start()
             appState.transition(to: .recording)
             // Recording length is gated by the length-cap timers (60/80/90s).
             // The watchdog covers only the post-recording pipeline phases
