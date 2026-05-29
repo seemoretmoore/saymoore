@@ -121,29 +121,35 @@ final class StreamingTranscriber {
                 let (head, tail) = timed.split(atCentiseconds: cutoffCs)
                 let lastT1: Int64 = head.segments.last?.t1Centiseconds ?? -1
                 Log.pipeline.debug("streaming tick: split cutoffCs=\(cutoffCs, privacy: .public) head.segs=\(head.segments.count, privacy: .public) head.text.len=\(head.text.count, privacy: .public) head.lastT1=\(lastT1, privacy: .public) tail.segs=\(tail.segments.count, privacy: .public) tail.text.len=\(tail.text.count, privacy: .public)")
-                // Decouple text commit from window advance: the window must
-                // slide even when nothing crossed the cutoff (transient
-                // silence, mid-word span, long pause), otherwise the next
-                // tick re-reads the same audio and the HUD freezes.
-                if !head.text.isEmpty {
+                // Advance the offset by the audio we ACTUALLY committed — the
+                // end of the last committed segment — measured from the window
+                // we read (windowStart). Two failure modes this avoids:
+                //   • A blind += commitAdvance (5s) overshoots when a tick only
+                //     committed ~1.5s of real-time audio, so the gap between is
+                //     never sent to any window → the live preview drops words.
+                //   • When inference falls behind, snapshotWindow clamps
+                //     windowStart to bufferEnd-windowSamples, ahead of the old
+                //     offset; advancing from the old offset re-reads and
+                //     re-commits the same audio ("very wrong" duplication).
+                // Anchoring to windowStart + committed-content end fixes both;
+                // segment ends are natural (pause) cut points, minimising
+                // mid-word splits. commitAdvanceSeconds stays the split cutoff
+                // (stable vs revisable) and the head-empty fallback stride.
+                if let lastCommitted = head.segments.last {
                     self.committedText += head.text
-                    Log.pipeline.debug("streaming tick: COMMIT text len=\(self.committedText.count, privacy: .public)")
+                    // centiseconds → 16 kHz samples (×160 = ×16_000/100).
+                    let committedEnd = windowStart + Int(lastCommitted.t1Centiseconds) * 160
+                    // Never go backwards (degenerate t1) — guarantee progress.
+                    self.committedSampleOffset = max(committedEnd, self.committedSampleOffset + 1)
+                    Log.pipeline.debug("streaming tick: COMMIT text len=\(self.committedText.count, privacy: .public) ADVANCE windowStart=\(windowStart, privacy: .public) + lastT1=\(lastCommitted.t1Centiseconds, privacy: .public)cs → \(self.committedSampleOffset, privacy: .public)")
                 } else {
-                    Log.pipeline.debug("streaming tick: NO COMMIT (head empty)")
+                    // No committed segment crossed the cutoff (transient
+                    // silence, mid-word span, long pause). No content boundary
+                    // to anchor to — slide by the fallback stride so the window
+                    // still advances and the HUD can't freeze (9218f0f).
+                    self.committedSampleOffset = windowStart + passMode.commitAdvanceSamples
+                    Log.pipeline.debug("streaming tick: NO COMMIT (head empty) ADVANCE windowStart=\(windowStart, privacy: .public) + \(passMode.commitAdvanceSamples, privacy: .public) → \(self.committedSampleOffset, privacy: .public)")
                 }
-                // Advance the offset relative to the window we ACTUALLY read
-                // (windowStart), not the prior offset. When inference falls
-                // behind, snapshotWindow clamps the window start to
-                // bufferEnd-windowSamples — ahead of committedSampleOffset.
-                // Advancing from the old offset (a fixed += commitAdvance) lets
-                // the clamp re-read the same audio every tick and re-commit it
-                // ("very wrong" duplication). Tracking windowStart drops the
-                // un-windowable backlog (the final pass re-transcribes it
-                // anyway) instead of duplicating it. In the steady state
-                // windowStart == committedSampleOffset, so this is identical to
-                // the old += advance.
-                self.committedSampleOffset = windowStart + passMode.commitAdvanceSamples
-                Log.pipeline.debug("streaming tick: ADVANCE offset windowStart=\(windowStart, privacy: .public) + \(passMode.commitAdvanceSamples, privacy: .public) → \(self.committedSampleOffset, privacy: .public)")
                 self.onPartialUpdate?(self.committedText, tail.text)
             }
         }

@@ -146,6 +146,33 @@ final class StreamingTranscriberTests: XCTestCase {
         await s.stop()
     }
 
+    func testAdvanceTracksCommittedContentNotFixedStride() async {
+        // The live preview must advance by the audio it actually committed
+        // (head.lastT1), NOT a blind commitAdvanceSamples (5s). With the fixed
+        // 5s stride, after a short ~1.5s first slice the offset jumps to 5s and
+        // the audio in between is never sent to a preview window — the preview
+        // drops words and lags. Ramp signal (sample[i] = i) so the fake's
+        // lastTimedSliceFirstSample reveals the absolute window start.
+        let fake = makeFake(TimedTranscript(segments: [
+            TimedSegment(text: "hello world", t0Centiseconds: 0, t1Centiseconds: 150),
+        ]))
+        let s = StreamingTranscriber(transcription: fake, mode: .balanced)
+        s.onPartialUpdate = { _, _ in }
+        s.start()
+        // 3s ramp — under the 10s window so no clamp masks the advance.
+        s.appendSamples((0..<(16_000 * 3)).map { Float($0) })
+        await s.forceTickForTests()
+        let firstStart = fake.lastTimedSliceFirstSample
+        await s.forceTickForTests()
+        let secondStart = fake.lastTimedSliceFirstSample
+        XCTAssertEqual(firstStart, 0, "first window starts at 0")
+        XCTAssertEqual(
+            secondStart, Float(150 * 160),
+            "second window must resume at the committed-content boundary (150cs → 24000 samples), not a blind 5s stride"
+        )
+        await s.stop()
+    }
+
     func testStopIsIdempotent() async {
         let s = StreamingTranscriber(transcription: FakeTranscriptionService(), mode: .balanced)
         s.start()
