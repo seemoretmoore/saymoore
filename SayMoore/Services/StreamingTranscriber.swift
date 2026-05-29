@@ -70,23 +70,34 @@ final class StreamingTranscriber {
         await tick()
     }
 
-    private func snapshotWindow(from start: Int, maxLength: Int) -> [Float]? {
+    private func snapshotWindow(from start: Int, maxLength: Int) -> (slice: [Float], bufferEnd: Int)? {
         bufferLock.lock()
         defer { bufferLock.unlock() }
         let end = samples.count
         guard end > start else { return nil }
         let clampStart = max(start, end - maxLength)
-        return Array(samples[clampStart..<end])
+        return (Array(samples[clampStart..<end]), end)
     }
 
     private func tick() async {
-        guard !disabled else { return }
-        guard inFlight == nil else { return }  // skip if previous pass still running
+        guard !disabled else {
+            Log.pipeline.debug("streaming tick: skipped (disabled)")
+            return
+        }
+        guard inFlight == nil else {
+            Log.pipeline.debug("streaming tick: skipped (inFlight)")
+            return
+        }
 
-        guard let slice = snapshotWindow(
+        guard let snap = snapshotWindow(
             from: committedSampleOffset,
             maxLength: mode.windowSamples
-        ) else { return }
+        ) else {
+            Log.pipeline.debug("streaming tick: no slice (committedOffset=\(self.committedSampleOffset, privacy: .public) bufferEmpty)")
+            return
+        }
+        let slice = snap.slice
+        Log.pipeline.debug("streaming tick: slice samples=\(slice.count, privacy: .public) (~\(String(format: "%.2f", Double(slice.count) / 16_000), privacy: .public)s) bufferEnd=\(snap.bufferEnd, privacy: .public) committedOffset=\(self.committedSampleOffset, privacy: .public)")
 
         let trans = transcription
         let passMode = self.mode
@@ -96,7 +107,10 @@ final class StreamingTranscriber {
                 timed = try await trans.transcribeTimed(samples: slice, sampleRate: 16_000)
             } catch {
                 await MainActor.run { [weak self] in
-                    self?.disabled = true
+                    guard let self else { return }
+                    Log.pipeline.error("streaming whisper failed: \(String(describing: error), privacy: .public) — disabling further passes")
+                    self.disabled = true
+                    self.onPartialUpdate?(self.committedText, "")
                 }
                 return
             }
@@ -104,9 +118,14 @@ final class StreamingTranscriber {
                 guard let self else { return }
                 let cutoffCs = Int64(passMode.commitAdvanceSeconds * 100)
                 let (head, tail) = timed.split(atCentiseconds: cutoffCs)
+                let lastT1: Int64 = head.segments.last?.t1Centiseconds ?? -1
+                Log.pipeline.debug("streaming tick: split cutoffCs=\(cutoffCs, privacy: .public) head.segs=\(head.segments.count, privacy: .public) head.text.len=\(head.text.count, privacy: .public) head.lastT1=\(lastT1, privacy: .public) tail.segs=\(tail.segments.count, privacy: .public) tail.text.len=\(tail.text.count, privacy: .public)")
                 if !head.text.isEmpty {
                     self.committedText += head.text
                     self.committedSampleOffset += passMode.commitAdvanceSamples
+                    Log.pipeline.debug("streaming tick: COMMIT advance=\(passMode.commitAdvanceSamples, privacy: .public) committedTextLen=\(self.committedText.count, privacy: .public) newCommittedOffset=\(self.committedSampleOffset, privacy: .public)")
+                } else {
+                    Log.pipeline.debug("streaming tick: NO COMMIT (head empty) — committedOffset frozen at \(self.committedSampleOffset, privacy: .public)")
                 }
                 self.onPartialUpdate?(self.committedText, tail.text)
             }

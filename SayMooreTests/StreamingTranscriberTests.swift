@@ -94,18 +94,20 @@ final class StreamingTranscriberTests: XCTestCase {
         await s.stop()
     }
 
-    func testInferenceErrorDoesNotCrashAndDisablesFurtherPasses() async {
+    func testInferenceErrorEmitsClearingPartialAndDisablesFurtherPasses() async {
         let fake = FakeTranscriptionService()
         fake.nextTimedResult = .failure(SayMooreError.modelMissing)
         let s = StreamingTranscriber(transcription: fake, mode: .balanced)
-        var emitCount = 0
-        s.onPartialUpdate = { _, _ in emitCount += 1 }
+        var emits: [(String, String)] = []
+        s.onPartialUpdate = { c, a in emits.append((c, a)) }
         s.start()
         s.appendSamples(Array(repeating: Float(0.01), count: 16_000 * 11))
         await s.forceTickForTests()
-        XCTAssertEqual(emitCount, 0, "errored pass must not emit")
+        XCTAssertEqual(emits.count, 1, "errored pass must emit one clearing partial so the HUD drops the italic tail")
+        XCTAssertEqual(emits.first?.0, "", "committed text was empty pre-error")
+        XCTAssertEqual(emits.first?.1, "", "active tail must be cleared on error")
         await s.forceTickForTests()
-        XCTAssertEqual(emitCount, 0)
+        XCTAssertEqual(emits.count, 1, "no further emits after disable")
         await s.stop()
     }
 
