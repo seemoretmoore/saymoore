@@ -117,40 +117,35 @@ final class StreamingTranscriber {
             }
             await MainActor.run { [weak self] in
                 guard let self else { return }
-                let cutoffCs = Int64(passMode.commitAdvanceSeconds * 100)
-                let (head, tail) = timed.split(atCentiseconds: cutoffCs)
-                let lastT1: Int64 = head.segments.last?.t1Centiseconds ?? -1
-                Log.pipeline.debug("streaming tick: split cutoffCs=\(cutoffCs, privacy: .public) head.segs=\(head.segments.count, privacy: .public) head.text.len=\(head.text.count, privacy: .public) head.lastT1=\(lastT1, privacy: .public) tail.segs=\(tail.segments.count, privacy: .public) tail.text.len=\(tail.text.count, privacy: .public)")
-                // Advance the offset by the audio we ACTUALLY committed — the
-                // end of the last committed segment — measured from the window
-                // we read (windowStart). Two failure modes this avoids:
-                //   • A blind += commitAdvance (5s) overshoots when a tick only
-                //     committed ~1.5s of real-time audio, so the gap between is
-                //     never sent to any window → the live preview drops words.
-                //   • When inference falls behind, snapshotWindow clamps
-                //     windowStart to bufferEnd-windowSamples, ahead of the old
-                //     offset; advancing from the old offset re-reads and
-                //     re-commits the same audio ("very wrong" duplication).
-                // Anchoring to windowStart + committed-content end fixes both;
-                // segment ends are natural (pause) cut points, minimising
-                // mid-word splits. commitAdvanceSeconds stays the split cutoff
-                // (stable vs revisable) and the head-empty fallback stride.
-                if let lastCommitted = head.segments.last {
-                    self.committedText += head.text
-                    // centiseconds → 16 kHz samples (×160 = ×16_000/100).
-                    let committedEnd = windowStart + Int(lastCommitted.t1Centiseconds) * 160
+                // Eager commit: the pill is rolling dictation feedback, not the
+                // authoritative output (that's the separate final full-buffer
+                // transcribe), so favour always-flowing text over per-word
+                // revision. Commit the whole slice and slide to where its speech
+                // ended. Crucially this commits a single long continuous segment
+                // (fluent speech → one segment spanning the slice) instead of
+                // stalling: the old slice-relative cutoff dropped any segment
+                // ending past 5s into an uncommittable tail, so committedText
+                // froze and the pill went near-empty.
+                if let lastSeg = timed.segments.last {
+                    self.committedText += timed.text
+                    // centiseconds → 16 kHz samples (×160 = ×16_000/100). Anchor
+                    // the advance to the window we actually read (windowStart,
+                    // clamped when behind) so we never re-read (duplication) and
+                    // never overshoot un-transcribed audio (dropped words).
+                    let committedEnd = windowStart + Int(lastSeg.t1Centiseconds) * 160
                     // Never go backwards (degenerate t1) — guarantee progress.
                     self.committedSampleOffset = max(committedEnd, self.committedSampleOffset + 1)
-                    Log.pipeline.debug("streaming tick: COMMIT text len=\(self.committedText.count, privacy: .public) ADVANCE windowStart=\(windowStart, privacy: .public) + lastT1=\(lastCommitted.t1Centiseconds, privacy: .public)cs → \(self.committedSampleOffset, privacy: .public)")
+                    Log.pipeline.debug("streaming tick: COMMIT len=\(self.committedText.count, privacy: .public) windowStart=\(windowStart, privacy: .public) lastT1=\(lastSeg.t1Centiseconds, privacy: .public)cs → offset=\(self.committedSampleOffset, privacy: .public)")
                 } else {
-                    // No committed segment crossed the cutoff (transient
-                    // silence, mid-word span, long pause). No content boundary
-                    // to anchor to — slide by the fallback stride so the window
-                    // still advances and the HUD can't freeze (9218f0f).
+                    // No segments (pure silence/noise): no content boundary to
+                    // anchor to — slide by the fallback stride so the window
+                    // keeps moving and the HUD can't freeze (9218f0f).
                     self.committedSampleOffset = windowStart + passMode.commitAdvanceSamples
-                    Log.pipeline.debug("streaming tick: NO COMMIT (head empty) ADVANCE windowStart=\(windowStart, privacy: .public) + \(passMode.commitAdvanceSamples, privacy: .public) → \(self.committedSampleOffset, privacy: .public)")
+                    Log.pipeline.debug("streaming tick: NO SEGMENTS slide windowStart=\(windowStart, privacy: .public) + \(passMode.commitAdvanceSamples, privacy: .public) → offset=\(self.committedSampleOffset, privacy: .public)")
                 }
-                self.onPartialUpdate?(self.committedText, tail.text)
+                // No revisable tail under eager commit — the pill shows the
+                // rolling tail of committedText (head-truncated by the HUD).
+                self.onPartialUpdate?(self.committedText, "")
             }
         }
         inFlight = task

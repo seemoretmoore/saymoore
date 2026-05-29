@@ -30,11 +30,14 @@ final class StreamingTranscriberTests: XCTestCase {
         await s.stop()
     }
 
-    func testSegmentPastCommitCutoffStaysInActive() async throws {
-        // Segment ends at t1=700cs, well past 500cs commit cutoff for .balanced.
-        // Must stay in active tail, not be lost.
+    func testCommitsSingleLongSegmentInsteadOfStalling() async throws {
+        // Regression for the near-empty live preview: continuous speech yields
+        // one segment spanning the whole slice. Under the old slice-relative
+        // 500cs cutoff a single segment ending at t1=700cs fell entirely into
+        // the (uncommittable) tail, so committedText never grew. Eager commit
+        // must commit it. There is no revisable tail any more → active == "".
         let fake = makeFake(TimedTranscript(segments: [
-            TimedSegment(text: "later", t0Centiseconds: 600, t1Centiseconds: 700),
+            TimedSegment(text: "later", t0Centiseconds: 0, t1Centiseconds: 700),
         ]))
         let s = StreamingTranscriber(transcription: fake, mode: .balanced)
         var latest: (String, String) = ("", "")
@@ -42,12 +45,12 @@ final class StreamingTranscriberTests: XCTestCase {
         s.start()
         s.appendSamples(Array(repeating: Float(0.01), count: 16_000 * 11))
         await s.forceTickForTests()
-        XCTAssertEqual(latest.0, "")
-        XCTAssertEqual(latest.1, "later")
+        XCTAssertEqual(latest.0, "later", "a single long segment must commit, not stall in a tail")
+        XCTAssertEqual(latest.1, "", "no revisable tail under eager commit")
         await s.stop()
     }
 
-    func testCommitsSegmentsOlderThanCommitAdvance() async throws {
+    func testCommitsAllSegmentsEagerly() async throws {
         let fake = makeFake(TimedTranscript(segments: [
             TimedSegment(text: "alpha", t0Centiseconds: 0,   t1Centiseconds: 400),
             TimedSegment(text: " beta", t0Centiseconds: 410, t1Centiseconds: 900),
@@ -58,8 +61,8 @@ final class StreamingTranscriberTests: XCTestCase {
         s.start()
         s.appendSamples(Array(repeating: Float(0.01), count: 16_000 * 11))
         await s.forceTickForTests()
-        XCTAssertEqual(latest.0, "alpha", "first segment should be committed (t1=4s ≤ 5s)")
-        XCTAssertEqual(latest.1, " beta", "second segment is still in active tail")
+        XCTAssertEqual(latest.0, "alpha beta", "eager commit takes the whole slice, both segments")
+        XCTAssertEqual(latest.1, "", "no revisable tail under eager commit")
         await s.stop()
     }
 
@@ -87,33 +90,30 @@ final class StreamingTranscriberTests: XCTestCase {
         await s.stop()
     }
 
-    func testTickAdvancesOffsetEvenWhenHeadIsEmpty() async {
-        // Regression for the "stuck preview" bug: if whisper's first pass
-        // returns only segments past the commit cutoff, head is empty —
-        // committedText must not grow, but committedSampleOffset MUST advance
-        // so the next tick reads fresh audio instead of re-feeding the same
-        // window. We assert this indirectly via the fake's lastTimedSliceCount.
+    func testNoSegmentsSlidesByFallbackStride() async {
+        // When a pass returns NO segments (pure silence/noise) there's no
+        // content boundary to anchor to. committedText must not grow, but the
+        // window MUST still slide by the fallback stride so the next tick reads
+        // fresh audio instead of re-feeding the same window (freeze, 9218f0f).
+        // Asserted via the fake's lastTimedSliceCount shrinkage.
         let fake = FakeTranscriptionService()
-        // All segments past the 5.0s commit cutoff → head empty every pass.
-        fake.nextTimedResult = .success(TimedTranscript(segments: [
-            TimedSegment(text: "later", t0Centiseconds: 600, t1Centiseconds: 700),
-        ]))
+        fake.nextTimedResult = .success(TimedTranscript(segments: []))
         let s = StreamingTranscriber(transcription: fake, mode: .balanced)
         var lastCommitted = "sentinel"
         s.onPartialUpdate = { c, _ in lastCommitted = c }
         s.start()
-        // Buffer 8s of audio — smaller than the 10s window cap so the
-        // window-start clamp doesn't mask the offset advance.
+        // Buffer 8s of audio — under the 10s window so the clamp doesn't mask
+        // the offset advance.
         s.appendSamples(Array(repeating: Float(0.01), count: 16_000 * 8))
         await s.forceTickForTests()
         let firstSlice = fake.lastTimedSliceCount
-        XCTAssertEqual(lastCommitted, "", "head was empty, no text should be committed")
+        XCTAssertEqual(lastCommitted, "", "no segments → nothing committed")
         await s.forceTickForTests()
         let secondSlice = fake.lastTimedSliceCount
         XCTAssertEqual(
             firstSlice - secondSlice,
             StreamingMode.balanced.commitAdvanceSamples,
-            "second tick must see a window shorter by commitAdvanceSamples — proof that committedSampleOffset advanced even though head.text was empty"
+            "second tick must see a window shorter by commitAdvanceSamples — proof the offset advanced by the fallback stride with no segments"
         )
         await s.stop()
     }
