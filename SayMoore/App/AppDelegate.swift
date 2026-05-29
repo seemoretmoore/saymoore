@@ -431,6 +431,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             vadService = nil
         }
 
+        // Dedicated VAD backend for trailing-silence trimming. Kept separate
+        // from the live VADService instance because Silero carries LSTM state
+        // across frames — sharing would race the live silence-auto-stop pass.
+        // nil → trim becomes a no-op (same tolerance as the live VAD above).
+        let trailingSilenceTrimmer: TrailingSilenceTrimmer?
+        if let sileroPath = Bundle.main.path(forResource: "silero_vad", ofType: "onnx") {
+            do {
+                let trimBackend = try SileroVADBackend(modelPath: sileroPath)
+                trailingSilenceTrimmer = TrailingSilenceTrimmer(backend: trimBackend)
+            } catch {
+                Log.vad.error("trailing-silence trim backend init failed, continuing without trim: \(String(describing: error), privacy: .public)")
+                trailingSilenceTrimmer = nil
+            }
+        } else {
+            trailingSilenceTrimmer = nil
+        }
+
         let coord = PipelineCoordinator(
             appState: appState,
             recorder: recorder,
@@ -441,6 +458,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             command: commandService,
             recordingsDir: Self.recordingsDirIfPossible(),
             vadService: vadService,
+            trailingSilenceTrimmer: trailingSilenceTrimmer,
             historyStore: historyStore,
             streamingModeProvider: { @MainActor in
                 let raw = UserDefaults.standard.string(forKey: StreamingMode.userDefaultsKey)

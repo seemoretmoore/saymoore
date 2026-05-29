@@ -35,6 +35,10 @@ final class PipelineCoordinator {
     #endif
     private let onFallback: (@MainActor (SayMooreError) -> Void)?
     private let vadService: VADService?
+    /// Optional trailing-silence trim applied to the drained buffer before the
+    /// final transcription pass (removes whisper's end-of-buffer filler
+    /// hallucinations). nil → no-op (tests, or missing Silero model).
+    private let trailingSilenceTrimmer: TrailingSilenceTrimmer?
     private let lengthCapCaution: TimeInterval
     private let lengthCapWarning: TimeInterval
     private let lengthCapHardStop: TimeInterval
@@ -96,6 +100,7 @@ final class PipelineCoordinator {
         recordingsDir: URL? = nil,
         persistRawWAV: Bool = false,
         vadService: VADService? = nil,
+        trailingSilenceTrimmer: TrailingSilenceTrimmer? = nil,
         historyStore: HistoryStore? = nil,
         lengthCapCaution: TimeInterval = PipelineCoordinator.defaultLengthCapCaution,
         lengthCapWarning: TimeInterval = PipelineCoordinator.defaultLengthCapWarning,
@@ -116,6 +121,7 @@ final class PipelineCoordinator {
         self.recordingsDir = recordingsDir
         self.persistRawWAV = persistRawWAV
         self.vadService = vadService
+        self.trailingSilenceTrimmer = trailingSilenceTrimmer
         self.historyStore = historyStore
         self.lengthCapCaution = lengthCapCaution
         self.lengthCapWarning = lengthCapWarning
@@ -138,6 +144,7 @@ final class PipelineCoordinator {
         command: CommandRewriting? = nil,
         recordingsDir: URL? = nil,
         vadService: VADService? = nil,
+        trailingSilenceTrimmer: TrailingSilenceTrimmer? = nil,
         historyStore: HistoryStore? = nil,
         lengthCapCaution: TimeInterval = PipelineCoordinator.defaultLengthCapCaution,
         lengthCapWarning: TimeInterval = PipelineCoordinator.defaultLengthCapWarning,
@@ -157,6 +164,7 @@ final class PipelineCoordinator {
         self.presets = presets
         self.recordingsDir = recordingsDir
         self.vadService = vadService
+        self.trailingSilenceTrimmer = trailingSilenceTrimmer
         self.historyStore = historyStore
         self.lengthCapCaution = lengthCapCaution
         self.lengthCapWarning = lengthCapWarning
@@ -464,11 +472,20 @@ final class PipelineCoordinator {
         }
     }
 
-    private func processSamples(_ samples: [Float]) async {
+    private func processSamples(_ rawSamples: [Float]) async {
         defer {
             processingTask = nil
             cancelWatchdog()
             Log.pipeline.debug("processingTask cleared")
+        }
+
+        // Drop trailing silence/noise so whisper doesn't hallucinate a filler
+        // word ("okay"/"my date") at the end of the buffer. No-op when no
+        // trimmer is wired (tests / missing Silero model) or nothing is safe
+        // to trim.
+        let samples = trailingSilenceTrimmer?.trim(rawSamples) ?? rawSamples
+        if samples.count != rawSamples.count {
+            Log.pipeline.debug("trailing-silence trim: \(rawSamples.count, privacy: .public) → \(samples.count, privacy: .public) samples")
         }
 
         #if DEBUG
