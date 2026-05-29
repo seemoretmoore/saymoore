@@ -70,13 +70,13 @@ final class StreamingTranscriber {
         await tick()
     }
 
-    private func snapshotWindow(from start: Int, maxLength: Int) -> (slice: [Float], bufferEnd: Int)? {
+    private func snapshotWindow(from start: Int, maxLength: Int) -> (slice: [Float], windowStart: Int, bufferEnd: Int)? {
         bufferLock.lock()
         defer { bufferLock.unlock() }
         let end = samples.count
         guard end > start else { return nil }
         let clampStart = max(start, end - maxLength)
-        return (Array(samples[clampStart..<end]), end)
+        return (Array(samples[clampStart..<end]), clampStart, end)
     }
 
     private func tick() async {
@@ -97,7 +97,8 @@ final class StreamingTranscriber {
             return
         }
         let slice = snap.slice
-        Log.pipeline.debug("streaming tick: slice samples=\(slice.count, privacy: .public) (~\(String(format: "%.2f", Double(slice.count) / 16_000), privacy: .public)s) bufferEnd=\(snap.bufferEnd, privacy: .public) committedOffset=\(self.committedSampleOffset, privacy: .public)")
+        let windowStart = snap.windowStart
+        Log.pipeline.debug("streaming tick: slice samples=\(slice.count, privacy: .public) (~\(String(format: "%.2f", Double(slice.count) / 16_000), privacy: .public)s) windowStart=\(windowStart, privacy: .public) bufferEnd=\(snap.bufferEnd, privacy: .public) committedOffset=\(self.committedSampleOffset, privacy: .public)")
 
         let trans = transcription
         let passMode = self.mode
@@ -130,8 +131,19 @@ final class StreamingTranscriber {
                 } else {
                     Log.pipeline.debug("streaming tick: NO COMMIT (head empty)")
                 }
-                self.committedSampleOffset += passMode.commitAdvanceSamples
-                Log.pipeline.debug("streaming tick: ADVANCE offset by=\(passMode.commitAdvanceSamples, privacy: .public) new=\(self.committedSampleOffset, privacy: .public)")
+                // Advance the offset relative to the window we ACTUALLY read
+                // (windowStart), not the prior offset. When inference falls
+                // behind, snapshotWindow clamps the window start to
+                // bufferEnd-windowSamples — ahead of committedSampleOffset.
+                // Advancing from the old offset (a fixed += commitAdvance) lets
+                // the clamp re-read the same audio every tick and re-commit it
+                // ("very wrong" duplication). Tracking windowStart drops the
+                // un-windowable backlog (the final pass re-transcribes it
+                // anyway) instead of duplicating it. In the steady state
+                // windowStart == committedSampleOffset, so this is identical to
+                // the old += advance.
+                self.committedSampleOffset = windowStart + passMode.commitAdvanceSamples
+                Log.pipeline.debug("streaming tick: ADVANCE offset windowStart=\(windowStart, privacy: .public) + \(passMode.commitAdvanceSamples, privacy: .public) → \(self.committedSampleOffset, privacy: .public)")
                 self.onPartialUpdate?(self.committedText, tail.text)
             }
         }

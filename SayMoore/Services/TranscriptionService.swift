@@ -237,9 +237,14 @@ final class FakeTranscriptionService: TranscriptionService, @unchecked Sendable 
     var nextTimedResult: Result<TimedTranscript, Error> = .success(TimedTranscript(segments: []))
     private(set) var timedCalls = 0
     private(set) var lastTimedSliceCount: Int = 0
+    /// First sample of the most recent slice. With a ramp input (sample[i] = i)
+    /// this reveals the absolute window-start offset the tick read — a test seam
+    /// for asserting the sliding window advances and never re-reads audio.
+    private(set) var lastTimedSliceFirstSample: Float = 0
     func transcribeTimed(samples: [Float], sampleRate: Int) async throws -> TimedTranscript {
         timedCalls += 1
         lastTimedSliceCount = samples.count
+        lastTimedSliceFirstSample = samples.first ?? 0
         return try nextTimedResult.get()
     }
 }

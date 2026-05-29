@@ -118,6 +118,34 @@ final class StreamingTranscriberTests: XCTestCase {
         await s.stop()
     }
 
+    func testClampedWindowDoesNotReReadSameAudio() async {
+        // Regression for the "very wrong" boundary-misalignment duplication.
+        // Buffer 20s — far past the 10s window — so snapshotWindow clamps the
+        // window start to end-windowSamples, AHEAD of committedSampleOffset.
+        // Bug: the offset advanced by a fixed commitAdvanceSamples from its OLD
+        // value, lagging the clamp, so the next tick re-read (and re-committed)
+        // the identical audio region. The offset must instead track the clamped
+        // window start. We observe the window start via the fake's
+        // lastTimedSliceFirstSample with a ramp signal (sample[i] = i).
+        let fake = makeFake(TimedTranscript(segments: [
+            TimedSegment(text: "x", t0Centiseconds: 0, t1Centiseconds: 100),
+        ]))
+        let s = StreamingTranscriber(transcription: fake, mode: .balanced)
+        s.onPartialUpdate = { _, _ in }
+        s.start()
+        let total = 16_000 * 20 // 20s; window is 10s → clamp engages
+        s.appendSamples((0..<total).map { Float($0) })
+        await s.forceTickForTests()
+        let firstStart = fake.lastTimedSliceFirstSample
+        await s.forceTickForTests()
+        let secondStart = fake.lastTimedSliceFirstSample
+        XCTAssertGreaterThan(
+            secondStart, firstStart,
+            "clamped window must advance — re-reading the same start re-commits the same audio (duplication)"
+        )
+        await s.stop()
+    }
+
     func testStopIsIdempotent() async {
         let s = StreamingTranscriber(transcription: FakeTranscriptionService(), mode: .balanced)
         s.start()
