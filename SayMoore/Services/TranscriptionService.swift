@@ -236,8 +236,10 @@ final class FakeTranscriptionService: TranscriptionService, @unchecked Sendable 
     }
     var nextTimedResult: Result<TimedTranscript, Error> = .success(TimedTranscript(segments: []))
     private(set) var timedCalls = 0
+    private(set) var lastTimedSliceCount: Int = 0
     func transcribeTimed(samples: [Float], sampleRate: Int) async throws -> TimedTranscript {
         timedCalls += 1
+        lastTimedSliceCount = samples.count
         return try nextTimedResult.get()
     }
 }

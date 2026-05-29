@@ -120,13 +120,18 @@ final class StreamingTranscriber {
                 let (head, tail) = timed.split(atCentiseconds: cutoffCs)
                 let lastT1: Int64 = head.segments.last?.t1Centiseconds ?? -1
                 Log.pipeline.debug("streaming tick: split cutoffCs=\(cutoffCs, privacy: .public) head.segs=\(head.segments.count, privacy: .public) head.text.len=\(head.text.count, privacy: .public) head.lastT1=\(lastT1, privacy: .public) tail.segs=\(tail.segments.count, privacy: .public) tail.text.len=\(tail.text.count, privacy: .public)")
+                // Decouple text commit from window advance: the window must
+                // slide even when nothing crossed the cutoff (transient
+                // silence, mid-word span, long pause), otherwise the next
+                // tick re-reads the same audio and the HUD freezes.
                 if !head.text.isEmpty {
                     self.committedText += head.text
-                    self.committedSampleOffset += passMode.commitAdvanceSamples
-                    Log.pipeline.debug("streaming tick: COMMIT advance=\(passMode.commitAdvanceSamples, privacy: .public) committedTextLen=\(self.committedText.count, privacy: .public) newCommittedOffset=\(self.committedSampleOffset, privacy: .public)")
+                    Log.pipeline.debug("streaming tick: COMMIT text len=\(self.committedText.count, privacy: .public)")
                 } else {
-                    Log.pipeline.debug("streaming tick: NO COMMIT (head empty) — committedOffset frozen at \(self.committedSampleOffset, privacy: .public)")
+                    Log.pipeline.debug("streaming tick: NO COMMIT (head empty)")
                 }
+                self.committedSampleOffset += passMode.commitAdvanceSamples
+                Log.pipeline.debug("streaming tick: ADVANCE offset by=\(passMode.commitAdvanceSamples, privacy: .public) new=\(self.committedSampleOffset, privacy: .public)")
                 self.onPartialUpdate?(self.committedText, tail.text)
             }
         }

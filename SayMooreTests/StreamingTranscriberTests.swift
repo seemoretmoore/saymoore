@@ -87,6 +87,37 @@ final class StreamingTranscriberTests: XCTestCase {
         await s.stop()
     }
 
+    func testTickAdvancesOffsetEvenWhenHeadIsEmpty() async {
+        // Regression for the "stuck preview" bug: if whisper's first pass
+        // returns only segments past the commit cutoff, head is empty —
+        // committedText must not grow, but committedSampleOffset MUST advance
+        // so the next tick reads fresh audio instead of re-feeding the same
+        // window. We assert this indirectly via the fake's lastTimedSliceCount.
+        let fake = FakeTranscriptionService()
+        // All segments past the 5.0s commit cutoff → head empty every pass.
+        fake.nextTimedResult = .success(TimedTranscript(segments: [
+            TimedSegment(text: "later", t0Centiseconds: 600, t1Centiseconds: 700),
+        ]))
+        let s = StreamingTranscriber(transcription: fake, mode: .balanced)
+        var lastCommitted = "sentinel"
+        s.onPartialUpdate = { c, _ in lastCommitted = c }
+        s.start()
+        // Buffer 8s of audio — smaller than the 10s window cap so the
+        // window-start clamp doesn't mask the offset advance.
+        s.appendSamples(Array(repeating: Float(0.01), count: 16_000 * 8))
+        await s.forceTickForTests()
+        let firstSlice = fake.lastTimedSliceCount
+        XCTAssertEqual(lastCommitted, "", "head was empty, no text should be committed")
+        await s.forceTickForTests()
+        let secondSlice = fake.lastTimedSliceCount
+        XCTAssertEqual(
+            firstSlice - secondSlice,
+            StreamingMode.balanced.commitAdvanceSamples,
+            "second tick must see a window shorter by commitAdvanceSamples — proof that committedSampleOffset advanced even though head.text was empty"
+        )
+        await s.stop()
+    }
+
     func testStopIsIdempotent() async {
         let s = StreamingTranscriber(transcription: FakeTranscriptionService(), mode: .balanced)
         s.start()
