@@ -11,7 +11,7 @@ final class RecordingHUDController {
 
     private static let pillSize = NSSize(width: 130, height: 30)
     private static let collapsedWidth: CGFloat = 130
-    private static let maxExpandedWidth: CGFloat = 480
+    private static let maxExpandedWidth: CGFloat = 300
     private static let dividerWidth: CGFloat = 1
     private static let dividerLeftMargin: CGFloat = 6
     private static let dividerRightMargin: CGFloat = 8
