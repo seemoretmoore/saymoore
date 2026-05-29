@@ -43,6 +43,17 @@ private struct GeneralPane: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            Section {
+                Picker("Streaming partials", selection: $viewModel.streamingMode) {
+                    Text("Off").tag(StreamingMode.off)
+                    Text("Balanced").tag(StreamingMode.balanced)
+                    Text("Responsive").tag(StreamingMode.responsive)
+                }
+                .pickerStyle(.segmented)
+                Text("Show transcribed text in the HUD as you speak. Balanced uses ~10–20% CPU during recording; Responsive ~25%. Applies to the next dictation.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
         .padding(.top, 8)
     }

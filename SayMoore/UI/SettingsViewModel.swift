@@ -17,6 +17,11 @@ final class SettingsViewModel: ObservableObject {
             UserDefaults.standard.set(muted, forKey: "audio.feedback.muted")
         }
     }
+    @Published var streamingMode: StreamingMode {
+        didSet {
+            UserDefaults.standard.set(streamingMode.rawValue, forKey: StreamingMode.userDefaultsKey)
+        }
+    }
     @Published var lastError: String?
 
     /// Row identity used by the SwiftUI table. We keep a `UUID` so the
@@ -39,6 +44,8 @@ final class SettingsViewModel: ObservableObject {
     init(presets: PresetStore) {
         self.presets = presets
         self.muted = UserDefaults.standard.bool(forKey: "audio.feedback.muted")
+        let raw = UserDefaults.standard.string(forKey: StreamingMode.userDefaultsKey)
+        self.streamingMode = raw.flatMap(StreamingMode.init(rawValue:)) ?? .default
         refresh()
     }
 

@@ -58,6 +58,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         NSApp.setActivationPolicy(.accessory)
         menuBar = MenuBarController(appState: appState, presets: presets, historyStore: historyStore)
+        // Avoid the NSApp.delegate shadowing trap: with SwiftUI App + a
+        // `Settings { … }` scene, `NSApp.delegate` is set to an internal
+        // `SwiftUI.AppDelegate` proxy, not our instance. Hand the menu bar
+        // a direct weak reference instead.
+        menuBar?.appDelegate = self
 
         // Surface any vocabulary warning captured during PresetStore.init.
         // PresetStore has already primed its dedupe state with this warning,
@@ -170,14 +175,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// `PresetStore`, so repeat saves of the same broken file stay quiet.
     @MainActor
     @discardableResult
-    static func reloadPresetsAndNotifyOnFailure(presets: PresetStore) -> Bool {
-        // After-reload UI sync. Keep this in sync with the static signature —
-        // the FSEvents path calls into the instance method which then calls
-        // this static, and we want the Settings VM to refresh on either path.
+    static func reloadPresetsAndNotifyOnFailure(presets: PresetStore, appDelegate: AppDelegate? = nil) -> Bool {
+        // After-reload UI sync. Caller passes its `self` (or the menu bar's
+        // weak ref) — we can't fish AppDelegate out of NSApp.delegate because
+        // SwiftUI's App lifecycle shadows it with `SwiftUI.AppDelegate`.
         defer {
-            if let d = NSApp.delegate as? AppDelegate {
-                d.settingsWindow?.notifyExternalReload()
-            }
+            appDelegate?.settingsWindow?.notifyExternalReload()
         }
         do {
             let outcome = try presets.reload()
@@ -243,7 +246,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // Hot-reload immediately so the new template is live without
             // waiting for FSEvents (the watcher will also fire, but it
             // dedupes on identical content).
-            _ = Self.reloadPresetsAndNotifyOnFailure(presets: presets)
+            _ = Self.reloadPresetsAndNotifyOnFailure(presets: presets, appDelegate: self)
             let bodyByStrategy: String
             switch strategy {
             case .merge:     bodyByStrategy = "Default prompt updated. Your overrides and vocabulary were preserved."
@@ -265,6 +268,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// so settings state stays consistent across menu invocations.
     @MainActor
     func showSettingsWindow() {
+        Log.app.info("showSettingsWindow: entered, settingsWindow=\(self.settingsWindow == nil ? "nil" : "exists", privacy: .public)")
         if settingsWindow == nil {
             settingsWindow = SettingsWindow(
                 presets: presets,
@@ -275,7 +279,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 },
                 onReloadPresets: { [weak self] in
                     guard let self else { return }
-                    _ = Self.reloadPresetsAndNotifyOnFailure(presets: self.presets)
+                    _ = Self.reloadPresetsAndNotifyOnFailure(presets: self.presets, appDelegate: self)
                 },
                 onCheckForPresetUpdates: { [weak self] in
                     guard let self else { return }
@@ -291,7 +295,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             )
         }
+        Log.app.info("showSettingsWindow: calling show() on settingsWindow")
         settingsWindow?.show()
+        Log.app.info("showSettingsWindow: returned from show()")
     }
 
     /// v1.1 vocab auto-suggest. Called by PipelineCoordinator after every
@@ -425,6 +431,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             vadService = nil
         }
 
+        // Dedicated VAD backend for trailing-silence trimming. Kept separate
+        // from the live VADService instance because Silero carries LSTM state
+        // across frames — sharing would race the live silence-auto-stop pass.
+        // nil → trim becomes a no-op (same tolerance as the live VAD above).
+        let trailingSilenceTrimmer: TrailingSilenceTrimmer?
+        if let sileroPath = Bundle.main.path(forResource: "silero_vad", ofType: "onnx") {
+            do {
+                let trimBackend = try SileroVADBackend(modelPath: sileroPath)
+                trailingSilenceTrimmer = TrailingSilenceTrimmer(backend: trimBackend)
+            } catch {
+                Log.vad.error("trailing-silence trim backend init failed, continuing without trim: \(String(describing: error), privacy: .public)")
+                trailingSilenceTrimmer = nil
+            }
+        } else {
+            trailingSilenceTrimmer = nil
+        }
+
         let coord = PipelineCoordinator(
             appState: appState,
             recorder: recorder,
@@ -435,7 +458,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             command: commandService,
             recordingsDir: Self.recordingsDirIfPossible(),
             vadService: vadService,
+            trailingSilenceTrimmer: trailingSilenceTrimmer,
             historyStore: historyStore,
+            streamingModeProvider: { @MainActor in
+                let raw = UserDefaults.standard.string(forKey: StreamingMode.userDefaultsKey)
+                return raw.flatMap(StreamingMode.init(rawValue:)) ?? .default
+            },
+            hudPartialSink: { [weak self] committed, active in
+                self?.hud.updatePartialText(committed: committed, active: active)
+            },
             onFallback: { error in NotificationCoordinator.shared.notify(error) }
         )
         // C1: stamp blocked flag immediately so probe results that landed before
@@ -515,7 +546,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let watcher = PresetWatcher(directory: presetsDir, fileName: "presets.json") { [weak self] in
             guard let self else { return }
             Task { @MainActor in
-                _ = Self.reloadPresetsAndNotifyOnFailure(presets: self.presets)
+                _ = Self.reloadPresetsAndNotifyOnFailure(presets: self.presets, appDelegate: self)
             }
         }
         watcher.start()

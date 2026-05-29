@@ -65,7 +65,13 @@ Icon?
 release/
 *.xcarchive
 
+# Superpowers brainstorming session artifacts (HTML mockups, server state)
+.superpowers/
+
 # Misc
 *.log
 *.bak
 *.tmp
+
+# Local Claude Code state (per-machine, never share)
+.claude/

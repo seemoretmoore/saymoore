@@ -10,6 +10,14 @@ final class MenuBarController: NSObject {
     private let appState: AppState
     private let presets: PresetStore
     private let historyStore: HistoryStore?
+    /// Direct reference, set by AppDelegate after construction. We can't go
+    /// through `NSApp.delegate` for the menu-bar actions: SwiftUI's `App`
+    /// lifecycle with a `Settings { … }` scene installs an internal
+    /// `SwiftUI.AppDelegate` as `NSApp.delegate`, which shadows the instance
+    /// produced by `@NSApplicationDelegateAdaptor(AppDelegate.self)`. The
+    /// cast `NSApp.delegate as? AppDelegate` therefore returns nil and the
+    /// Settings… menu item silently no-ops.
+    weak var appDelegate: AppDelegate?
     private let titleItem: NSMenuItem
     private var cancellables: Set<AnyCancellable> = []
     private var pulseTimer: Timer?
@@ -115,9 +123,11 @@ final class MenuBarController: NSObject {
     }
 
     @objc private func openSettingsTapped() {
-        // SettingsWindow lifetime + AppDelegate dependencies live on the
-        // delegate; bounce through it rather than holding another reference.
-        (NSApp.delegate as? AppDelegate)?.showSettingsWindow()
+        guard let delegate = appDelegate else {
+            Log.app.error("openSettingsTapped: appDelegate weak ref is nil — AppDelegate deallocated?")
+            return
+        }
+        delegate.showSettingsWindow()
     }
 
     @objc private func editPresetsTapped() {
@@ -132,7 +142,7 @@ final class MenuBarController: NSObject {
         // failure and the new vocabulary-warning banner on partial failure
         // (deduped on PresetStore). The success toast below is menu-action
         // specific feedback that the FSEvent path intentionally lacks.
-        let ok = AppDelegate.reloadPresetsAndNotifyOnFailure(presets: presets)
+        let ok = AppDelegate.reloadPresetsAndNotifyOnFailure(presets: presets, appDelegate: appDelegate)
         if ok {
             Log.app.info("presets reloaded from disk")
             NotificationCenterAdapter.shared.notify(
@@ -151,8 +161,9 @@ final class MenuBarController: NSObject {
             alert.alertStyle = .informational
             alert.runModal()
         case .upgradeAvailable(let disk, let bundled):
-            NSApp.delegate.flatMap { $0 as? AppDelegate }?
-                .promptPresetUpgrade(diskVersion: disk, bundledVersion: bundled)
+            // Same SwiftUI-AppDelegate-shadow concern as openSettingsTapped:
+            // route through the explicit weak ref, not NSApp.delegate.
+            appDelegate?.promptPresetUpgrade(diskVersion: disk, bundledVersion: bundled)
         }
     }
 

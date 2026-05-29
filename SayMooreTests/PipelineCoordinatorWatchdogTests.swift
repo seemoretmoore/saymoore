@@ -7,6 +7,7 @@ final class PipelineCoordinatorWatchdogTests: XCTestCase {
     private final class FakeRecorder: AudioRecording {
         var isRecording: Bool = false
         var vadService: VADService?
+        var onSamples: (@Sendable ([Float]) -> Void)?
         var samples: [Float] = Array(repeating: 0.5, count: 16_000)
         func start() throws { isRecording = true }
         func stop() throws -> [Float] { isRecording = false; return samples }
@@ -22,7 +23,7 @@ final class PipelineCoordinatorWatchdogTests: XCTestCase {
     }
     private final class FakeKeyboard: KeyboardAdapter, @unchecked Sendable {
         func postCmdV() {}
-        func postCmdZ() {}
+        func postCmdZ() -> Bool { true }
     }
     private final class FakeFrontmost: FrontmostAdapter, @unchecked Sendable {
         var bundleID: String?
@@ -42,6 +43,10 @@ final class PipelineCoordinatorWatchdogTests: XCTestCase {
         func transcribe(samples: [Float], sampleRate: Int, initialPrompt: String?) async throws -> Transcript {
             try await Task.sleep(nanoseconds: 10_000_000_000) // 10s
             return Transcript(text: "never", averageNoSpeechProb: 0)
+        }
+        func transcribeTimed(samples: [Float], sampleRate: Int) async throws -> TimedTranscript {
+            try await Task.sleep(nanoseconds: 10_000_000_000)
+            return TimedTranscript(segments: [])
         }
     }
 

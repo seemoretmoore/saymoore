@@ -7,6 +7,7 @@ final class PipelineCoordinatorCleanupTests: XCTestCase {
     private final class FakeRecorder: AudioRecording {
         var isRecording = false
         var vadService: VADService?
+        var onSamples: (@Sendable ([Float]) -> Void)?
         var samples: [Float] = Array(repeating: 0.5, count: 16_000)
         func start() throws { isRecording = true }
         func stop() throws -> [Float] { isRecording = false; return samples }
@@ -23,7 +24,7 @@ final class PipelineCoordinatorCleanupTests: XCTestCase {
         var pastes = 0
         var undos = 0
         func postCmdV() { pastes += 1 }
-        func postCmdZ() { undos += 1 }
+        func postCmdZ() -> Bool { undos += 1; return true }
     }
     private final class FakeFrontmost: FrontmostAdapter, @unchecked Sendable {
         var bundleID: String?

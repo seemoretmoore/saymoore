@@ -32,7 +32,10 @@ final class SettingsWindow: NSObject {
         window.contentViewController = hosting
         window.title = "SayMoore Settings"
         window.isReleasedWhenClosed = false
-        window.collectionBehavior = [.canJoinAllSpaces, .moveToActiveSpace]
+        // `.moveToActiveSpace` jumps the window to the user's current Space
+        // when re-foregrounded; `.fullScreenAuxiliary` lets it layer over a
+        // frontmost fullscreen app instead of triggering a Space switch.
+        window.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
         window.center()
         super.init()
     }
