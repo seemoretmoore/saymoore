@@ -1,4 +1,6 @@
 import AVFoundation
+import AudioToolbox
+import CoreAudio
 import Foundation
 import os
 
@@ -87,6 +89,23 @@ final class AudioRecorder {
     /// engine as `object` so the observer (filtered on the same engine) fires.
     var engineForObserverTesting: AVAudioEngine { engine }
 
+    /// UserDefaults key for the pinned input-device UID. Absent/empty ⇒ follow
+    /// the macOS system-default input.
+    nonisolated static let inputDeviceUIDKey = "input.device.uid"
+
+    private let deviceEnumerator: AudioInputDeviceEnumerating
+    private let pinnedDeviceUIDProvider: @Sendable () -> String?
+
+    init(
+        deviceEnumerator: AudioInputDeviceEnumerating = CoreAudioInputDeviceEnumerator(),
+        pinnedDeviceUIDProvider: @escaping @Sendable () -> String? = {
+            UserDefaults.standard.string(forKey: AudioRecorder.inputDeviceUIDKey)
+        }
+    ) {
+        self.deviceEnumerator = deviceEnumerator
+        self.pinnedDeviceUIDProvider = pinnedDeviceUIDProvider
+    }
+
     deinit {
         if let obs = configChangeObserver {
             NotificationCenter.default.removeObserver(obs)
@@ -100,6 +119,7 @@ final class AudioRecorder {
         setupConfigChangeObserverIfNeeded()
 
         let input = engine.inputNode
+        pinInputDeviceIfNeeded()
         let inputFormat = resolveInputFormat()
         // DIAG (AirPods reroute investigation): capture the node's output vs input
         // formats before tapping. On an AirPods aggregate device these disagree and
@@ -151,6 +171,39 @@ final class AudioRecorder {
             Log.audio.error("AudioRecorder input still 0Hz after warmup (ch=\(fmt.channelCount, privacy: .public))")
         }
         return fmt
+    }
+
+    /// Test seam: resolve the pinned UID (if any) to a live AudioDeviceID via
+    /// the enumerator. Returns nil when nothing is pinned or the pinned device
+    /// is absent (e.g. unplugged), which callers treat as "use system default".
+    func resolvePinnedDeviceID() -> AudioDeviceID? {
+        guard let uid = pinnedDeviceUIDProvider(), !uid.isEmpty else { return nil }
+        return deviceEnumerator.deviceID(forUID: uid)
+    }
+
+    /// Pin the input AudioUnit (AUHAL) to the resolved device before the engine
+    /// starts. On any failure — missing UID, unplugged device, OSStatus error —
+    /// log and leave the engine on the system default rather than aborting.
+    private func pinInputDeviceIfNeeded() {
+        guard let deviceID = resolvePinnedDeviceID() else { return }
+        guard let unit = engine.inputNode.audioUnit else {
+            Log.audio.error("pin: inputNode.audioUnit unavailable — using system default")
+            return
+        }
+        var dev = deviceID
+        let status = AudioUnitSetProperty(
+            unit,
+            kAudioOutputUnitProperty_CurrentDevice,
+            kAudioUnitScope_Global,
+            0,
+            &dev,
+            UInt32(MemoryLayout<AudioDeviceID>.size)
+        )
+        if status != noErr {
+            Log.audio.error("pin: AudioUnitSetProperty(CurrentDevice=\(deviceID, privacy: .public)) failed OSStatus=\(status, privacy: .public) — using system default")
+        } else {
+            Log.audio.info("pinned input device id=\(deviceID, privacy: .public)")
+        }
     }
 
     /// Install the tap and build the converter lazily from the first delivered

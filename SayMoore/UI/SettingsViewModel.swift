@@ -24,6 +24,20 @@ final class SettingsViewModel: ObservableObject {
     }
     @Published var lastError: String?
 
+    /// Enumerated input devices for the Settings picker. Snapshotted at init;
+    /// the Settings window is short-lived so a live refresh isn't needed.
+    let availableInputDevices: [AudioInputDevice]
+    /// Pinned input-device UID. nil ⇒ "System Default". Persists like `muted`.
+    @Published var inputDeviceUID: String? {
+        didSet {
+            if let uid = inputDeviceUID {
+                UserDefaults.standard.set(uid, forKey: AudioRecorder.inputDeviceUIDKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: AudioRecorder.inputDeviceUIDKey)
+            }
+        }
+    }
+
     /// Row identity used by the SwiftUI table. We keep a `UUID` so the
     /// editor can reorder / delete by index without remounting every row.
     struct VocabRow: Identifiable, Equatable {
@@ -41,11 +55,14 @@ final class SettingsViewModel: ObservableObject {
         var entry: VocabEntry { VocabEntry(phonetic: phonetic, canonical: canonical) }
     }
 
-    init(presets: PresetStore) {
+    init(presets: PresetStore,
+         enumerator: AudioInputDeviceEnumerating = CoreAudioInputDeviceEnumerator()) {
         self.presets = presets
         self.muted = UserDefaults.standard.bool(forKey: "audio.feedback.muted")
         let raw = UserDefaults.standard.string(forKey: StreamingMode.userDefaultsKey)
         self.streamingMode = raw.flatMap(StreamingMode.init(rawValue:)) ?? .default
+        self.availableInputDevices = enumerator.inputDevices()
+        self.inputDeviceUID = UserDefaults.standard.string(forKey: AudioRecorder.inputDeviceUIDKey)
         refresh()
     }
 

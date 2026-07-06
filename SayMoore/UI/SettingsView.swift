@@ -44,6 +44,17 @@ private struct GeneralPane: View {
                     .foregroundStyle(.secondary)
             }
             Section {
+                Picker("Input device", selection: $viewModel.inputDeviceUID) {
+                    Text("System Default").tag(String?.none)
+                    ForEach(viewModel.availableInputDevices) { device in
+                        Text(device.name).tag(Optional(device.uid))
+                    }
+                }
+                Text("Pin a specific microphone. \"System Default\" follows the macOS input. Applies to the next dictation.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Section {
                 Picker("Streaming partials", selection: $viewModel.streamingMode) {
                     Text("Off").tag(StreamingMode.off)
                     Text("Balanced").tag(StreamingMode.balanced)
