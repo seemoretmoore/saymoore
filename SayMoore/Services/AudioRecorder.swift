@@ -2,6 +2,32 @@ import AVFoundation
 import Foundation
 import os
 
+/// Lazily builds the 16 kHz converter from the first tap buffer's real format,
+/// then hands the same instance to every subsequent callback. `@unchecked
+/// Sendable` (guarded by an internal lock) so it can be captured into the
+/// audio-thread tap block, which strict concurrency treats as `@Sendable`.
+private final class LazyConverterStore: @unchecked Sendable {
+    private let lock = NSLock()
+    private let targetSampleRate: Double
+    private var converter: AudioFormatConverter?
+
+    init(targetSampleRate: Double) {
+        self.targetSampleRate = targetSampleRate
+    }
+
+    func converter(for buffer: AVAudioPCMBuffer) throws -> AudioFormatConverter {
+        lock.lock()
+        defer { lock.unlock() }
+        if let converter { return converter }
+        let created = try AudioFormatConverter(
+            inputFormat: buffer.format,
+            targetSampleRate: targetSampleRate
+        )
+        converter = created
+        return created
+    }
+}
+
 @MainActor
 final class AudioRecorder {
     static let targetSampleRate: Double = 16_000
@@ -15,7 +41,6 @@ final class AudioRecorder {
 
     private let engine = AVAudioEngine()
     private let ringBuffer = AudioRingBuffer(capacity: bufferCapacityFrames)
-    private var converter: AudioFormatConverter?
     private(set) var isRecording = false
     // Tap-callback runs on the audio thread; lock-protect the rate-limit timestamp.
     private let errorLogLock = OSAllocatedUnfairLock<ContinuousClock.Instant?>(initialState: nil)
@@ -76,16 +101,26 @@ final class AudioRecorder {
 
         let input = engine.inputNode
         let inputFormat = resolveInputFormat()
+        // DIAG (AirPods reroute investigation): capture the node's output vs input
+        // formats before tapping. On an AirPods aggregate device these disagree and
+        // installTap raises an *Objective-C* NSException ("format mismatch") that
+        // Swift's do/catch can't see — the failure is then invisible. These logs
+        // pinpoint the exact formats + the last checkpoint reached on the next test.
+        let hwInputFormat = input.inputFormat(forBus: 0)
+        Log.audio.info("start DIAG: tapFmt(out0)=\(inputFormat.sampleRate, privacy: .public)Hz/\(inputFormat.channelCount, privacy: .public)ch  nodeIn(in0)=\(hwInputFormat.sampleRate, privacy: .public)Hz/\(hwInputFormat.channelCount, privacy: .public)ch")
         guard inputFormat.sampleRate > 0 else {
             Log.audio.error("AudioRecorder start failed: input format 0Hz (ch=\(inputFormat.channelCount, privacy: .public))")
             throw SayMooreError.audioEngineFailed(underlying: RecorderError.invalidInputFormat)
         }
-        try installTapAndConverter(inputFormat: inputFormat)
+        Log.audio.info("start DIAG: installing tap+converter…")
+        try installTapAndConverter()
+        Log.audio.info("start DIAG: tap installed OK — starting engine…")
 
         do {
             try engine.start()
         } catch {
             input.removeTap(onBus: 0)
+            Log.audio.error("start DIAG: engine.start() threw (Swift-catchable): \(String(describing: error), privacy: .public)")
             throw SayMooreError.audioEngineFailed(underlying: error)
         }
         rerouteCount = 0
@@ -118,23 +153,37 @@ final class AudioRecorder {
         return fmt
     }
 
-    /// Create the converter for `inputFormat` and install the tap. Shared by
-    /// `start()` and `restartEngineOnDeviceChange()` so the capture closure can't
-    /// drift between the two paths. The converter is bound to its input format,
-    /// so a re-route MUST recreate it for the new device's rate/channels.
-    private func installTapAndConverter(inputFormat: AVAudioFormat) throws {
-        let conv = try AudioFormatConverter(
-            inputFormat: inputFormat,
-            targetSampleRate: Self.targetSampleRate
-        )
-        self.converter = conv
-
+    /// Install the tap and build the converter lazily from the first delivered
+    /// buffer's format. Shared by `start()` and `restartEngineOnDeviceChange()`
+    /// so the capture closure can't drift between the two paths.
+    ///
+    /// The tap is installed with `format: nil`, so AVAudioEngine uses the input
+    /// node's own negotiated format. Passing an explicit format here is what
+    /// raised an *uncatchable* Objective-C NSException on AirPods aggregate
+    /// devices whose input vs output formats disagree ("format mismatch") — that
+    /// exception is invisible to Swift `do/catch` and, unwinding through the
+    /// CGEvent-tap C callback, aborted the process (the "hotkey does nothing when
+    /// AirPods active" symptom). `nil` removes the format we could mismatch, and
+    /// the `installTap` call is additionally wrapped in an ObjC exception guard so
+    /// any residual NSException degrades to a Swift throw instead of a crash.
+    ///
+    /// The converter is bound to its input format, so it is created from the real
+    /// delivered `buffer.format` (a re-route can change rate/channels) rather than
+    /// a pre-read format that may be stale on a settling Bluetooth route.
+    private func installTapAndConverter() throws {
         let ring = self.ringBuffer
         let vad = self.vadService
         let levelHandler = self.onLevelUpdate
         let samplesHandler = self.onSamples
-        engine.inputNode.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { [weak self] buffer, _ in
+        let errorLock = self.errorLogLock
+        // Built once on the first buffer (from its live format), then reused.
+        // The store is @unchecked Sendable and lock-serialized so it can be
+        // captured into the audio-thread tap block under strict concurrency.
+        let converterStore = LazyConverterStore(targetSampleRate: Self.targetSampleRate)
+
+        let tapBlock: AVAudioNodeTapBlock = { buffer, _ in
             do {
+                let conv = try converterStore.converter(for: buffer)
                 let converted = try conv.convert(buffer)
                 guard let ch = converted.floatChannelData?[0] else { return }
                 let frames = Int(converted.frameLength)
@@ -154,8 +203,7 @@ final class AudioRecorder {
                 }
             } catch {
                 // Rate-limit converter error logs to 1/sec across audio-thread invocations.
-                guard let self else { return }
-                let shouldLog = self.errorLogLock.withLock { last -> Bool in
+                let shouldLog = errorLock.withLock { last -> Bool in
                     let now = ContinuousClock.now
                     if let last, now - last < .seconds(1) { return false }
                     last = now
@@ -165,6 +213,16 @@ final class AudioRecorder {
                     Log.audio.error("AudioRecorder converter error: \(error, privacy: .public)")
                 }
             }
+        }
+
+        Log.audio.info("start DIAG: calling installTap(format=nil, node-negotiated)…")
+        do {
+            try ObjCExceptionCatcher.catchException {
+                self.engine.inputNode.installTap(onBus: 0, bufferSize: 1024, format: nil, block: tapBlock)
+            }
+        } catch {
+            Log.audio.error("AudioRecorder installTap raised ObjC exception: \(error, privacy: .public)")
+            throw SayMooreError.audioEngineFailed(underlying: RecorderError.invalidInputFormat)
         }
     }
 
@@ -292,7 +350,7 @@ final class AudioRecorder {
             return
         }
         do {
-            try installTapAndConverter(inputFormat: newFormat)
+            try installTapAndConverter()
             try engine.start()
         } catch {
             Log.audio.error("AudioRecorder reroute failed: \(error, privacy: .public) — aborting")

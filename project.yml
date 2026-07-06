@@ -18,6 +18,7 @@ packages:
 settings:
   base:
     SWIFT_VERSION: "5.10"
+    SWIFT_OBJC_BRIDGING_HEADER: SayMoore/SayMoore-Bridging-Header.h
     SWIFT_STRICT_CONCURRENCY: complete
     MACOSX_DEPLOYMENT_TARGET: "14.0"
     CODE_SIGN_STYLE: Manual

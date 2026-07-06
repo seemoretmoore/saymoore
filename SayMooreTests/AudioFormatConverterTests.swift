@@ -71,6 +71,41 @@ final class AudioFormatConverterTests: XCTestCase {
         XCTAssertLessThan(totalOut, expected + 200)
     }
 
+    func testUpsamplesMono8kSCOStreamingToMono16k() throws {
+        // AirPods-as-mic drops to HFP/SCO telephone quality: mono, 8 kHz. In
+        // production the tap feeds this format continuously in small buffers and
+        // the converter upsamples each to 16 kHz mono. Verify it never throws and
+        // that cumulative output ≈ input × (16000/8000) across many convert()
+        // calls on one instance (the real capture path), not a single shot.
+        let sco = AVAudioFormat(
+            commonFormat: .pcmFormatFloat32,
+            sampleRate: 8_000,
+            channels: 1,
+            interleaved: false
+        )!
+        let conv = try AudioFormatConverter(inputFormat: sco, targetSampleRate: 16_000)
+
+        let bufferFrames: AVAudioFrameCount = 1024
+        let bufferCount = 50  // ~6.4s of 8k audio in ~128ms chunks
+        var totalOut = 0
+        for _ in 0..<bufferCount {
+            let buf = AVAudioPCMBuffer(pcmFormat: sco, frameCapacity: bufferFrames)!
+            buf.frameLength = bufferFrames
+            for i in 0..<Int(bufferFrames) {
+                buf.floatChannelData![0][i] = 0.3
+            }
+            let out = try conv.convert(buf)
+            XCTAssertEqual(out.format.sampleRate, 16_000)
+            XCTAssertEqual(out.format.channelCount, 1)
+            totalOut += Int(out.frameLength)
+        }
+        let expected = Int(Double(bufferFrames) * Double(bufferCount) * (16_000.0 / 8_000.0))
+        // Generous slack for resampler ramp across buffer seams; the key property
+        // is that we do NOT lose ~half the audio (regression guard for SCO 8k).
+        XCTAssertGreaterThan(totalOut, expected - 400)
+        XCTAssertLessThan(totalOut, expected + 400)
+    }
+
     func testPassThroughWhenAlreadyTargetFormat() throws {
         let target = AVAudioFormat(
             commonFormat: .pcmFormatFloat32,
